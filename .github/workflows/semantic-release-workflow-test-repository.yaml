@@ -1,30 +1,29 @@
 name: Semantic Release workflow
-run-name: ${{ github.actor }} Semantic Release workflow
 
 on:
-  push:
-    branches:
-      - "main"
-
-env:
-  PROJECT_ID: "${{ secrets.PROJECT_ID }}"
-  GAR_LOCATION: "${{ secrets.GAR_LOCATION }}"
+  workflow_call:
+    secrets:
+      PROJECT_ID:
+        required: true
+      GAR_LOCATION:
+        required: true
+      SLACK_WEBHOOK_URL:
+        required: true
+      SLACK_CHANNEL:
+        required: true
 
 jobs:
-  semantic: 
+  semantic:
     permissions: write-all
     runs-on: ubuntu-latest
-    steps:
-      - name: Generate GitHub App token
-        id: generate-deployment-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.DEPLOY_APP_ID }}
-          private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
-          owner: HDRUK
-          repositories: |
-            ${{ github.event.repository.name }}
 
+    env:
+      PROJECT_ID: ${{ secrets.PROJECT_ID }}
+      GAR_LOCATION: ${{ secrets.GAR_LOCATION }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+
+    steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
