@@ -10,6 +10,7 @@ on:
 
 jobs:
   check-title:
+    name: check-title
     runs-on: ubuntu-latest
 
     steps:
