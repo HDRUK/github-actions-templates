@@ -1,0 +1,33 @@
+name: Deploy Release
+
+on:
+  workflow_call:
+    inputs:
+      env:
+        required: true
+        type: string
+      tag_version:
+        required: true
+        type: string
+    secrets:
+      PROJECT_ID:
+        required: true
+      GAR_LOCATION:
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Deploy
+        run: |
+          echo "Deploying version ${{ inputs.tag_version }} to ${{ inputs.env }}"
+          echo "PROJECT_ID=${{ secrets.PROJECT_ID }}"
+          echo "GAR_LOCATION=${{ secrets.GAR_LOCATION }}"
