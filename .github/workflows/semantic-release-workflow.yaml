@@ -1,0 +1,159 @@
+name: Semantic Release Workflow
+
+on:
+  workflow_call:
+    inputs:
+      chart_path:
+        description: "Path to Helm chart directory"
+        required: true
+        type: string
+      environments:
+        description: "JSON array of environments"
+        required: false
+        default: '["preprod","prod"]'
+        type: string
+      node_version:
+        required: false
+        default: "20"
+        type: string
+      enable_build:
+        required: false
+        default: true
+        type: boolean
+    secrets:
+      PROJECT_ID:
+        required: true
+      GAR_LOCATION:
+        required: true
+      SLACK_WEBHOOK_URL:
+        required: true
+      SLACK_CHANNEL:
+        required: true
+      DEPLOY_APP_ID:
+        required: true
+      DEPLOY_APP_PRIVATE_KEY:
+        required: true
+      WIF_PROVIDER:
+        required: true
+      WIF_SERVICE_ACCOUNT:
+        required: true
+
+env:
+  PROJECT_ID: ${{ secrets.PROJECT_ID }}
+  GAR_LOCATION: ${{ secrets.GAR_LOCATION }}
+  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+  SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+
+jobs:
+  semantic:
+    name: Semantic Release
+    runs-on: ubuntu-latest
+    permissions: write-all
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Generate GitHub App token
+        id: gh-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.DEPLOY_APP_ID }}
+          private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
+          owner: PKUK
+          repositories: |
+            ${{ github.event.repository.name }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Semantic Release
+        run: npx semantic-release
+        env:
+          GITHUB_TOKEN: ${{ steps.gh-token.outputs.token }}
+
+      - name: Configure Git
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+
+      - name: Sync with main
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Read appVersion from Chart.yaml
+        id: getversion
+        run: |
+          CHART_FILE="${{ inputs.chart_path }}/Chart.yaml"
+
+          if [ ! -f "$CHART_FILE" ]; then
+            echo "❌ Chart.yaml not found at $CHART_FILE"
+            exit 1
+          fi
+
+          VERSION=$(yq '.appVersion' "$CHART_FILE")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Merge main → dev (squash)
+        env:
+          GITHUB_TOKEN: ${{ steps.gh-token.outputs.token }}
+          RELEASE_VERSION: ${{ steps.getversion.outputs.version }}
+        run: |
+          git fetch origin dev
+          git checkout dev
+          git merge --squash origin/main || true
+          git checkout --theirs . || true
+          git add .
+          git commit --allow-empty -m \
+            "sync: update dev from main (release ${RELEASE_VERSION}) [skip ci]"
+          git push origin dev
+
+  build:
+    name: Build & Push
+    if: inputs.enable_build
+    needs: semantic
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+
+    strategy:
+      matrix:
+        environment: ${{ fromJson(inputs.environments) }}
+
+    environment: ${{ matrix.environment }}
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Read appVersion
+        id: getversion
+        run: |
+          VERSION=$(yq '.appVersion' "${{ inputs.chart_path }}/Chart.yaml")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Google Auth
+        id: auth
+        uses: "google-github-actions/auth@v2"
+        with:
+          token_format: "access_token"
+          workload_identity_provider: "${{ secrets.WIF_PROVIDER }}"
+          service_account: "${{ secrets.WIF_SERVICE_ACCOUNT }}"
+
+      - name: Login to GAR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.PROJECT_ID }}
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
