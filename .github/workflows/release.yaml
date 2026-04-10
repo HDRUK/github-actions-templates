@@ -1,0 +1,81 @@
+name: Release Workflow 
+on:
+  workflow_call:
+    inputs:
+      environments:
+        description: "JSON array of environments"
+        required: false
+        default: '["preprod","prod"]'
+        type: string
+      gar_name:
+        description: "GAR repository name"
+        required: true
+        type: string
+    secrets:
+      PROJECT_ID:
+        required: true
+      GAR_LOCATION:
+        required: true
+      SLACK_WEBHOOK_URL:
+        required: true
+      SLACK_CHANNEL:
+        required: true
+      WIF_PROVIDER:
+        required: true
+      WIF_SERVICE_ACCOUNT:
+        required: true
+
+env:
+  PROJECT_ID: ${{ secrets.PROJECT_ID }}
+  GAR_LOCATION: ${{ secrets.GAR_LOCATION }}
+  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+  SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+
+jobs:
+  build:
+    name: Build and Push Release Image
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    strategy:
+      matrix:
+        environment: ${{ fromJson(inputs.environments) }}
+
+    environment: ${{ matrix.environment }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract version from release branch
+        id: getversion
+        run: |
+          BRANCH="${GITHUB_REF_NAME}"     # release/1.2.3
+          VERSION="${BRANCH#release/}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Google Auth (WIF)
+        id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          token_format: access_token
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Login to GAR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.PROJECT_ID }}
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Build and Push Container
+        shell: bash
+        run: |
+          IMAGE="${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ inputs.gar_name }}"
+          VERSION="${{ steps.getversion.outputs.version }}"
+
+          echo "Pushing image $IMAGE:$VERSION"
