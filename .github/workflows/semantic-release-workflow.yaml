@@ -74,6 +74,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ steps.gh-token.outputs.token }}
 
+      - name: Set Git config
+        run: |
+            git config --local user.email "actions@github.com"
+            git config --local user.name "Github Actions"
+  
+      - name: Fetch latest changes from main
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+
       - name: Read version from Helm chart
         id: getversion
         run: |
