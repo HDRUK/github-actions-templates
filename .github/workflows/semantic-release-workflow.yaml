@@ -3,23 +3,20 @@ name: Semantic Release Workflow
 on:
   workflow_call:
     inputs:
+      service_name:
+        required: true
+        type: string
       chart_path:
-        description: "Path to Helm chart directory"
         required: true
         type: string
       environments:
-        description: "JSON array of environments"
         required: false
-        default: '["preprod","prod"]'
         type: string
-      node_version:
+        default: ""
+      docker_tags:
         required: false
-        default: "20"
-        type: string
-      enable_build:
-        required: false
-        default: true
         type: boolean
+        default: true
     secrets:
       PROJECT_ID:
         required: true
@@ -42,7 +39,8 @@ env:
   PROJECT_ID: ${{ secrets.PROJECT_ID }}
   GAR_LOCATION: ${{ secrets.GAR_LOCATION }}
   SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-  SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+  SLACK_CHANNEL: ${{ secrets.GITHUBACTIONS_SLACK_CHANNEL }}
+  NODE_VERSION: 20
 
 jobs:
   semantic:
@@ -58,7 +56,7 @@ jobs:
 
       - name: Generate GitHub App token
         id: gh-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.DEPLOY_APP_ID }}
           private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
@@ -67,9 +65,9 @@ jobs:
             ${{ github.event.repository.name }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: ${{ inputs.node_version }}
+          node-version: ${{ env.NODE_VERSION }}
 
       - name: Install dependencies
         run: npm ci
@@ -79,32 +77,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ steps.gh-token.outputs.token }}
 
-      - name: Configure Git
-        run: |
-          git config --local user.email "actions@github.com"
-          git config --local user.name "GitHub Actions"
-
-      - name: Sync with main
-        run: |
-          git fetch origin main
-          git reset --hard origin/main
-
-      - name: Read appVersion from Chart.yaml
+      - name: Read version from Helm chart
         id: getversion
         run: |
-          CHART_FILE="${{ inputs.chart_path }}/Chart.yaml"
+          VERSION=$(awk -F'"' '/^appVersion:/ {print $2}' ${{ inputs.chart_path }})
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-          if [ ! -f "$CHART_FILE" ]; then
-            echo "❌ Chart.yaml not found at $CHART_FILE"
-            exit 1
-          fi
-
-          VERSION=$(yq '.appVersion' "$CHART_FILE")
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Merge main → dev (squash)
+      - name: Merge changes from main to dev (squash)
         env:
-          GITHUB_TOKEN: ${{ steps.gh-token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.token.outputs.token }}
           RELEASE_VERSION: ${{ steps.getversion.outputs.version }}
         run: |
           git fetch origin dev
@@ -117,8 +98,7 @@ jobs:
           git push origin dev
 
   build:
-    name: Build & Push
-    if: inputs.enable_build
+    name: Build and Push Release Image
     needs: semantic
     runs-on: ubuntu-latest
     permissions:
@@ -127,7 +107,7 @@ jobs:
 
     strategy:
       matrix:
-        environment: ${{ fromJson(inputs.environments) }}
+        environment: ${{ fromJson(inputs.environments != '' && format('["{0}"]', inputs.environments) || '["release"]') }}
 
     environment: ${{ matrix.environment }}
 
@@ -140,16 +120,16 @@ jobs:
       - name: Read appVersion
         id: getversion
         run: |
-          VERSION=$(yq '.appVersion' "${{ inputs.chart_path }}/Chart.yaml")
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          VERSION=$(awk -F'"' '/^appVersion:/ {print $2}' ${{ inputs.chart_path }})
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Google Auth
         id: auth
         uses: "google-github-actions/auth@v2"
         with:
-          token_format: "access_token"
-          workload_identity_provider: "${{ secrets.WIF_PROVIDER }}"
-          service_account: "${{ secrets.WIF_SERVICE_ACCOUNT }}"
+          token_format: access_token
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
 
       - name: Login to GAR
         uses: docker/login-action@v3
