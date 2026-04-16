@@ -10,10 +10,6 @@ on:
         required: false
         type: string
         default: ""
-      docker_tags:
-        required: false
-        type: boolean
-        default: true
     secrets:
       PROJECT_ID:
         required: true
@@ -102,44 +98,3 @@ jobs:
           git add .
           git commit --allow-empty -m "sync: update dev with latest main changes from release ${RELEASE_VERSION} (squash sync) [skip ci]"
           git push origin dev
-
-  build:
-    name: Build and Push Release Image
-    needs: semantic
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      id-token: write
-
-    strategy:
-      matrix:
-        environment: ${{ fromJson(inputs.environments != '' && format('["{0}"]', inputs.environments) || '["release"]') }}
-
-    environment: ${{ matrix.environment }}
-
-    steps:
-      - name: Checkout main
-        uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Read appVersion
-        id: getversion
-        run: |
-          VERSION=$(awk -F'"' '/^appVersion:/ {print $2}' ${{ inputs.chart_path }})
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Google Auth
-        id: auth
-        uses: "google-github-actions/auth@v2"
-        with:
-          token_format: "access_token"
-          workload_identity_provider: "${{ secrets.WIF_PROVIDER }}"
-          service_account: "${{ secrets.WIF_SERVICE_ACCOUNT }}"
-
-      - name: Login to GAR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ secrets.GAR_LOCATION }}-docker.pkg.dev/${{ secrets.PROJECT_ID }}/${{ secrets.PROJECT_ID }}
-          username: oauth2accesstoken
-          password: ${{ steps.auth.outputs.access_token }}
