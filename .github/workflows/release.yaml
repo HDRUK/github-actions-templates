@@ -11,7 +11,7 @@ on:
         description: "GAR repository name"
         required: true
         type: string
-      build_args:
+      docker_build_args:
         description: "Docker build args"
         required: false
         type: string
