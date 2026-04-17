@@ -86,6 +86,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           GAR_LOCATION: ${{ secrets.GAR_LOCATION }}
           PROJECT_ID: ${{ secrets.PROJECT_ID }}
+          GAR_NAME: ${{ secrets.GAR_NAME }}
         run: |
           IMAGE="${{ inputs.docker_build_args }}"
           echo $IMAGE
