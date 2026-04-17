@@ -20,6 +20,8 @@ on:
         required: true
       GAR_LOCATION:
         required: true
+      GAR_NAME:
+        required: true
       SLACK_WEBHOOK_URL:
         required: true
       SLACK_CHANNEL:
