@@ -11,6 +11,11 @@ on:
         description: "GAR repository name"
         required: true
         type: string
+      build_script:
+        description: "Path to project-specific build script"
+        required: true
+        type: string
+
     secrets:
       PROJECT_ID:
         required: true
