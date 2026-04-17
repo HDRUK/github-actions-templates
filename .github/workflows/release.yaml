@@ -5,7 +5,6 @@ on:
       environments:
         description: "JSON array of environments"
         required: false
-        default: '["preprod","prod"]'
         type: string
       gar_name:
         description: "GAR repository name"
