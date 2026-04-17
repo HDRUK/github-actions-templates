@@ -61,9 +61,9 @@ jobs:
       - name: Extract version from release branch
         id: getversion
         run: |
-          BRANCH="${GITHUB_REF_NAME}"     # release/1.2.3
+          BRANCH="${GITHUB_REF_NAME}"   # release/1.2.3
           VERSION="${BRANCH#release/}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Google Auth (WIF)
         id: auth
@@ -82,7 +82,7 @@ jobs:
 
       - name: Build & Push Image
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ steps.getversion.outputs.version }}
           GAR_LOCATION: ${{ secrets.GAR_LOCATION }}
           PROJECT_ID: ${{ secrets.PROJECT_ID }}
           GAR_NAME: ${{ secrets.GAR_NAME }}
