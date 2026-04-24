@@ -25,10 +25,6 @@ jobs:
     permissions: write-all
 
     steps:
-      - name: Checkout main
-        uses: actions/checkout@v4
-        with:
-          ref: main
 
       - name: Generate GitHub App token
         id: gh-token
@@ -39,6 +35,11 @@ jobs:
           owner: HDRUK
           repositories: |
             ${{ github.event.repository.name }}
+
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
