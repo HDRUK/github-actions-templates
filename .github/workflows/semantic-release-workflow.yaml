@@ -39,7 +39,9 @@ jobs:
       - name: Checkout main
         uses: actions/checkout@v4
         with:
+          token:  ${{ steps.gh-token.outputs.token }}
           ref: main
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
