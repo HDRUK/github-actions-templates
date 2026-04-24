@@ -2,11 +2,6 @@ name: PR Title Validation
 
 on:
   workflow_call:
-    secrets:
-      DEPLOY_APP_ID:
-        required: true
-      DEPLOY_APP_PRIVATE_KEY:
-        required: true
 
 jobs:
   check-title:
