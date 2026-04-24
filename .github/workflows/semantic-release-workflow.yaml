@@ -80,4 +80,4 @@ jobs:
           git checkout --theirs . || true
           git add .
           git commit --allow-empty -m "sync: update dev with latest main changes from release ${RELEASE_VERSION} (squash sync) [skip ci]"
-          git push --force origin dev
+          git push origin dev
