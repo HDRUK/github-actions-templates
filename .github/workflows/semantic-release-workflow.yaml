@@ -55,9 +55,9 @@ jobs:
 
       - name: Set Git config
         run: |
-            git config --local user.email "actions@github.com"
-            git config --local user.name "Github Actions"
-  
+          git config --local user.email "${{ steps.gh-token.outputs.app-slug }}[bot]@users.noreply.github.com"
+          git config --local user.name "${{ steps.gh-token.outputs.app-slug }}[bot]"
+
       - name: Fetch latest changes from main
         run: |
           git fetch origin main
@@ -71,9 +71,9 @@ jobs:
 
       - name: Merge changes from main to dev
         env:
-          GITHUB_TOKEN: ${{ steps.gh-token.outputs.token }}
           RELEASE_VERSION: ${{ steps.getversion.outputs.version }}
         run: |
+          git remote set-url origin https://x-access-token:${{ steps.gh-token.outputs.token }}@github.com/${{ github.repository }}.git
           git fetch origin dev
           git checkout dev
           git merge --squash origin/main || true
