@@ -2,6 +2,11 @@ name: PR Title Validation
 
 on:
   workflow_call:
+    inputs:
+      pr_title_pattern:
+        description: "Regex pattern for validating PR titles"
+        required: true
+        type: string
 
 jobs:
   check-title:
@@ -35,7 +40,8 @@ jobs:
 
           # Define regex patterns
           RELEASE_PATTERN="^RELEASE: .+$"
-          STANDARD_PATTERN="^(feat|fix|chore|docs|style|refactor|test|perf)(!?)\(GAT-[0-9]+\): .+$"
+          #STANDARD_PATTERN=""
+          STANDARD_PATTERN="${{ inputs.pr_title_pattern }}"
 
           if echo "$TITLE" | grep -E -q "$RELEASE_PATTERN"; then
             echo "✅ PR title is a valid RELEASE PR!"
