@@ -1,0 +1,62 @@
+name: Terraform Lint on Terraform Directories
+
+on:
+  workflow_call:
+
+jobs:
+  detect-and-lint:
+    runs-on: ubuntu-latest
+    name: Lint Changed Terraform Directories
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git to use GitHub token for private modules
+        run: |
+          git config --global url."https://${{ secrets.GH_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Get Terraform directories
+        id: changes
+        run: |
+          echo "CHANGED_DIRS=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | xargs -n1 dirname | sort -u | tr '\n' ' ')" >> $GITHUB_ENV
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.7
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v5
+        with:
+          tflint_version: latest
+
+      - name: Run Terraform Format & Lint
+        run: |
+          for dir in $CHANGED_DIRS; do
+            if find "$dir" -maxdepth 1 -name "*.tf" | grep -q .; then
+              echo "Checking Terraform format in $dir"
+              terraform -chdir=$dir fmt -check
+              echo "Linting in $dir"
+              tflint --chdir "$dir"
+            else
+              echo "Skipping $dir (no Terraform files found)"
+            fi
+          done
+
+      - name: Install tfsec
+        run: |
+          curl -sSL https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
+
+      - name: Run tfsec on changed directories
+        run: |
+          for dir in $CHANGED_DIRS; do
+            if find "$dir" -maxdepth 1 -name "*.tf" | grep -q .; then
+              echo "Running tfsec in $dir"
+              tfsec "$dir"
+            else
+              echo "Skipping $dir (no Terraform files found)"
+            fi
+          done
