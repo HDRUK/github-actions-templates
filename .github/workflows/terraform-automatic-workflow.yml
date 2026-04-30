@@ -3,7 +3,7 @@ name: 'Terraform Deployment'
 on:
   workflow_call:
     inputs:
-      environment:
+      env:
         required: true
         type: string
       terraform_version:
@@ -24,8 +24,8 @@ jobs:
   terraform:
     name: 'Terraform'
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
-    
+    environment: '${{ inputs.env }}'
+
     # Add "id-token" with the intended permissions.
     permissions:
       contents: 'read'
