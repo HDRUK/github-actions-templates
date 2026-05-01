@@ -1,0 +1,96 @@
+name: Build and deploy Cloud Function
+run-name: ${{ github.actor }} triggered deploy pipeline
+
+on:
+  workflow_call:
+    inputs:
+      env:
+        required: true
+        type: string
+
+env:
+  PROJECT_ID: "${{ secrets.PROJECT_ID }}"
+  SLACK_WEBHOOK_URL: "${{ secrets.SLACK_WEBHOOK_URL}}"
+  SLACK_CHANNEL: "${{ secrets.GITHUBACTIONS_SLACK_CHANNEL }}"
+
+jobs:
+  build:
+    permissions:
+      contents: read
+      id-token: write
+
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    steps:
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.env }}
+
+      - name: Google Auth
+        id: auth
+        uses: "google-github-actions/auth@v2"
+        with:
+          token_format: "access_token"
+          project_id: "${{ secrets.PROJECT_ID }}"
+          workload_identity_provider: "${{ secrets.WIF_PROVIDER }}"
+          service_account: "${{ secrets.WIF_SERVICE_ACCOUNT }}"
+
+      - name: "Set up Cloud SDK"
+        id: setupsdk
+        uses: "google-github-actions/setup-gcloud@v1"
+        with:
+          version: ">= 363.0.0"
+
+      - name: Zip the application
+        id: zipapplication
+        run: |
+          rm -rf ${{ secrets.ARCHIVE_NAME }}
+          zip -r ${{ secrets.ARCHIVE_NAME }} .
+
+      - name: "Use gcloud CLI to upload the source to the bucket"
+        run: gsutil -h x-goog-meta-github-sha:${{ github.sha }} cp ${{ secrets.ARCHIVE_NAME }} '${{ secrets.BUCKET_PATH }}'
+
+  deploy:
+    needs: build
+    permissions:
+      contents: read
+      id-token: write
+
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    steps:
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.env }}
+
+      - name: Google Auth
+        id: auth
+        uses: "google-github-actions/auth@v3"
+        with:
+          token_format: "access_token"
+          workload_identity_provider: "${{ secrets.WIF_PROVIDER }}"
+          service_account: "${{ secrets.WIF_SERVICE_ACCOUNT }}"
+
+      - name: Deploy to Cloud Functions
+        uses: actions-hub/gcloud@540.0.0
+        id: deploy
+        env:
+          PROJECT_ID: ${{ secrets.PROJECT_ID }}
+          SERVICE_NAME: "${{ secrets.SERVICE_NAME }}"
+          SERVICE_REGION: "${{ secrets.SERVICE_REGION }}"
+        with:
+          args: functions deploy "${{ env.SERVICE_NAME }}" --gen2 --runtime=python310 --entry-point=check_status --source="${{ secrets.BUCKET_PATH }}/${{ secrets.ARCHIVE_NAME }}" --region="${{ env.SERVICE_REGION }}" --project="${{ env.PROJECT_ID }}" --trigger-http
+
+      - name: Run Notification
+        id: runnotificationsent
+        uses: act10ns/slack@v1
+        with:
+          status: ${{ job.status }}
+          steps: ${{ toJson(steps) }}
+          channel: ${{ secrets.SLACK_CHANNEL }}
+          message: Deploying {{ env.GITHUB_REF_NAME }} branch to PROD ${{ job.status }}
+        if: always()

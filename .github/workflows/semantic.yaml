@@ -1,0 +1,86 @@
+name: Semantic Workflow
+
+on:
+  workflow_call:
+    inputs:
+      chart_path:
+        required: true
+        type: string
+      environments:
+        required: false
+        type: string
+        default: ""
+
+env:
+  PROJECT_ID: ${{ secrets.PROJECT_ID }}
+  GAR_LOCATION: ${{ secrets.GAR_LOCATION }}
+  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+  SLACK_CHANNEL: ${{ secrets.GITHUBACTIONS_SLACK_CHANNEL }}
+  NODE_VERSION: 24
+
+jobs:
+  semantic:
+    name: Semantic Release
+    runs-on: ubuntu-latest
+    permissions: write-all
+
+    steps:
+
+      - name: Generate GitHub App token
+        id: gh-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.DEPLOY_APP_ID }}
+          private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
+          owner: HDRUK
+          repositories: |
+            ${{ github.event.repository.name }}
+
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          token:  ${{ steps.gh-token.outputs.token }}
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Semantic Release
+        run: npx semantic-release
+        env:
+          GITHUB_TOKEN: ${{ steps.gh-token.outputs.token }}
+
+      - name: Set Git config
+        run: |
+            git config --local user.email "actions@github.com"
+            git config --local user.name "Github Actions"
+ 
+      - name: Fetch latest changes from main
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+ 
+      - name: Read version from Helm chart
+        id: getversion
+        run: |
+          VERSION=$(awk -F'"' '/^appVersion:/ {print $2}' ${{ inputs.chart_path }})
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+ 
+      - name: Merge changes from main to dev
+        env:
+          GITHUB_TOKEN: ${{ steps.gh-token.outputs.token }}
+          RELEASE_VERSION: ${{ steps.getversion.outputs.version }}
+        run: |
+          git fetch origin dev
+          git checkout dev
+          git merge --squash origin/main || true
+          git checkout --theirs . || true
+          git add .
+          git commit --allow-empty -m "sync: update dev with latest main changes from release ${RELEASE_VERSION} (squash sync) [skip ci]"
+          git push origin dev
