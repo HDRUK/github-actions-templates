@@ -69,26 +69,7 @@ jobs:
       - name: Read version from Helm chart
         id: getversion
         run: |
-          BRANCH_NAME="${GITHUB_REF#refs/heads/}"
-
-          echo "Current branch: $BRANCH_NAME"
-
-          if [[ "$BRANCH_NAME" == release/* ]]; then
-            # Extract version from release branch name
-            VERSION="${BRANCH_NAME#release/}"
-            VERSION="${VERSION#v}"   # strip leading v if present
-            echo "Detected release branch. Version: $VERSION"
-          else
-            # Extract version from Helm chart
-            VERSION=$(awk -F'"' '/^appVersion:/ {print $2}' "${{ inputs.chart_path }}")
-            echo "Detected non-release branch. Version from chart: $VERSION"
-          fi
-
-          if [ -z "$VERSION" ]; then
-            echo "ERROR: Version could not be determined"
-            exit 1
-          fi
-
+          VERSION=$(awk -F'"' '/^appVersion:/ {print $2}' ${{ inputs.chart_path }})
           echo "version=$VERSION" >> $GITHUB_OUTPUT
  
       - name: Merge changes from main to dev
