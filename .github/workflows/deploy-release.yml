@@ -7,7 +7,7 @@ on:
         required: true
         type: string
       tag_version:
-        required: true
+        required: false
         type: string
       run_scan:
         description: "Enable AppCheck scan"
@@ -35,6 +35,16 @@ jobs:
           workload_identity_provider: "${{ secrets.WIF_PROVIDER }}"
           service_account: "${{ secrets.WIF_SERVICE_ACCOUNT }}"
 
+      - name: Resolve image tag
+        id: resolve_tag
+        run: |
+          if [ "${{ inputs.env }}" = "dev" ]; then
+            TAG=$(awk -F'"' '/^appVersion:/ {print $2}' ${{ inputs.chart_path }})
+          else
+            TAG="${{ inputs.tag_version }}"
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
       - name: Deploy to Cloud Run
         uses: actions-hub/gcloud@540.0.0
         id: deploy
@@ -46,7 +56,7 @@ jobs:
           SERVICE_NAME: "${{ secrets.SERVICE_NAME }}"
           SERVICE_REGION: "${{ secrets.SERVICE_REGION }}"
         with:
-          args: run services update '${{ env.SERVICE_NAME }}' --image='${{ env.GAR_LOCATION }}'-docker.pkg.dev/'${{ env.PROD_PROJECT_ID }}'/'${{ env.GAR_NAME }}'/${{ inputs.tag_version }}:latest --region='${{ env.SERVICE_REGION }}' --project='${{ env.PROJECT_ID }}'
+          args: run services update '${{ env.SERVICE_NAME }}' --image='${{ env.GAR_LOCATION }}'-docker.pkg.dev/'${{ env.PROD_PROJECT_ID }}'/'${{ env.GAR_NAME }}'/${{ inputs.resolve_tag.outputs.tag }}:latest --region='${{ env.SERVICE_REGION }}' --project='${{ env.PROJECT_ID }}'
 
       - name: Trigger AppCheck scan
         id: appcheck-scan
