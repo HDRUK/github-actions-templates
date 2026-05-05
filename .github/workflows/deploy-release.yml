@@ -17,6 +17,10 @@ on:
       chart_path:
         required: true
         type: string
+      git_ref:
+        required: true
+        type: string
+        default: "main"
 
 jobs:
   deploy:
@@ -27,7 +31,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.env }}
+          ref: ${{ inputs.git_ref }}
 
       - name: Google Auth
         id: auth
