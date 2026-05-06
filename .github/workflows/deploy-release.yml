@@ -18,12 +18,15 @@ on:
         required: true
         type: string
       git_ref:
-        required: true
+        required: false
         type: string
         default: "main"
 
 jobs:
   deploy:
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
 
