@@ -21,6 +21,9 @@ on:
         required: false
         type: string
         default: "main"
+      docker_project_id:
+        required: false
+        type: string
 
 jobs:
   deploy:
@@ -55,18 +58,27 @@ jobs:
           fi
           echo "tag=$TAG" >> $GITHUB_OUTPUT
 
+      - name: Resolve target project
+        id: project_id
+        run: |
+          PROJECT="${{ inputs.docker_project_id }}"
+
+          if [ "${{ inputs.env }}" = "dev" ] || [ -z "$PROJECT" ]; then
+            PROJECT="${{ secrets.PROJECT_ID }}"
+          fi
+          echo "project=$PROJECT" >> $GITHUB_OUTPUT
+
       - name: Deploy to Cloud Run
         uses: actions-hub/gcloud@540.0.0
         id: deploy
         env:
-          PROJECT_ID: ${{ secrets.PROJECT_ID }}
-          PROD_PROJECT_ID: ${{ secrets.PROD_PROJECT_ID }}
+          PROJECT_ID: ${{ steps.project_id.outputs.project }}
           GAR_LOCATION: ${{ secrets.GAR_LOCATION }}
           GAR_NAME: ${{ secrets.GAR_NAME }}
-          SERVICE_NAME: "${{ secrets.SERVICE_NAME }}"
-          SERVICE_REGION: "${{ secrets.SERVICE_REGION }}"
+          SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
+          SERVICE_REGION: ${{ secrets.SERVICE_REGION }}
         with:
-          args: run services update '${{ env.SERVICE_NAME }}' --image='${{ env.GAR_LOCATION }}'-docker.pkg.dev/'${{ env.PROD_PROJECT_ID }}'/'${{ env.GAR_NAME }}'/${{ inputs.resolve_tag.outputs.tag }}:latest --region='${{ env.SERVICE_REGION }}' --project='${{ env.PROJECT_ID }}'
+          args: run services update '${{ env.SERVICE_NAME }}' --image='${{ env.GAR_LOCATION }}'-docker.pkg.dev/'${{ env.PROJECT_ID }}'/'${{ env.GAR_NAME }}'/${{ steps.resolve_tag.outputs.tag }}:latest --region='${{ env.SERVICE_REGION }}' --project='${{ secrets.PROJECT_ID }}'
 
       - name: Trigger AppCheck scan
         id: appcheck-scan
