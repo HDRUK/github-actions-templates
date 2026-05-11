@@ -3,6 +3,10 @@ name: Lint GitHub Workflows
 on:
   workflow_call:
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   actionlint:
     name: actionlint
