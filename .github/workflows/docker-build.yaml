@@ -2,9 +2,9 @@ name: Docker Build Workflow
 on:
   workflow_call:
     inputs:
-      environments:
-        description: "JSON array of environments"
-        required: false
+      environment:
+        description: "Environment to deploy to"
+        required: true
         type: string
       docker_build_args:
         description: "Docker build args"
@@ -22,18 +22,14 @@ env:
 
 jobs:
   build:
-    name: Build and Push Release Image
+    name: Build and Push Docker Image
     runs-on: ubuntu-latest
 
     permissions:
       contents: read
       id-token: write
 
-    strategy:
-      matrix:
-        environment: ${{ fromJson(inputs.environments) }}
-
-    environment: ${{ matrix.environment }}
+    environment: ${{ inputs.environment }}
 
     steps:
       - name: Checkout repository
