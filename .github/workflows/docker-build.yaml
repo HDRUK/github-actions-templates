@@ -6,10 +6,6 @@ on:
         description: "JSON array of environments"
         required: false
         type: string
-      gar_name:
-        description: "GAR repository name"
-        required: true
-        type: string
       docker_build_args:
         description: "Docker build args"
         required: false
