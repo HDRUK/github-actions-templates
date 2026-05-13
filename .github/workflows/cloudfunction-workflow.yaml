@@ -22,11 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     steps:
-      - name: Checkout
-        id: checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.env }}
+      - name: Checkout repository
+        uses: actions/checkout@v6
 
       - name: Google Auth
         id: auth
@@ -61,11 +58,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
     steps:
-      - name: Checkout
-        id: checkout
+      - name: Checkout repository
         uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.env }}
 
       - name: Google Auth
         id: auth
