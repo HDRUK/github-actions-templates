@@ -77,7 +77,7 @@ jobs:
           SERVICE_NAME: "${{ secrets.SERVICE_NAME }}"
           SERVICE_REGION: "${{ secrets.SERVICE_REGION }}"
         with:
-          args: functions deploy "${{ env.SERVICE_NAME }}" --gen2 --runtime=python310 --entry-point=check_status --source="${{ secrets.BUCKET_PATH }}/${{ secrets.ARCHIVE_NAME }}" --region="${{ env.SERVICE_REGION }}" --project="${{ env.PROJECT_ID }}" --trigger-http
+          args: functions deploy "${{ env.SERVICE_NAME }}" --gen2 --source="${{ secrets.BUCKET_PATH }}/${{ secrets.ARCHIVE_NAME }}" --region="${{ env.SERVICE_REGION }}" --project="${{ env.PROJECT_ID }}" --trigger-http
 
       - name: Run Notification
         id: runnotificationsent
@@ -86,5 +86,5 @@ jobs:
           status: ${{ job.status }}
           steps: ${{ toJson(steps) }}
           channel: ${{ secrets.SLACK_CHANNEL }}
-          message: Deploying {{ env.GITHUB_REF_NAME }} branch to PROD ${{ job.status }}
+          message: Deploying {{ env.GITHUB_REF_NAME }} branch ${{ job.status }}
         if: always()
