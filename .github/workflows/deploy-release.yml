@@ -126,6 +126,6 @@ jobs:
         with:
           status: ${{ job.status }}
           steps: ${{ toJson(steps) }}
-          channel: ${{ secrets.SLACK_CHANNEL }}
+          channel: ${{ secrets.GITHUBACTIONS_SLACK_CHANNEL  }}
           message: Deploying tag ${{ inputs.tag_version }} to ENV ${{ inputs.env }} ${{ job.status }}
         if: always()
