@@ -64,7 +64,7 @@ jobs:
           PROJECT="${{ inputs.docker_project_id }}"
 
           if [ "${{ inputs.env }}" = "dev" ] || [ -z "$PROJECT" ]; then
-            PROJECT="${{ secrets.PROJECT_ID }}"
+            PROJECT="${{ secrets.PROD_PROJECT_ID }}"
           fi
           echo "project=$PROJECT" >> $GITHUB_OUTPUT
 
