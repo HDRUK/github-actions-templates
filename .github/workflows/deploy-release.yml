@@ -21,6 +21,9 @@ on:
         required: false
         type: string
         default: "main"
+      artifact_project_id:
+        required: false
+        type: string
 
 jobs:
   deploy:
@@ -58,11 +61,21 @@ jobs:
       - name: Resolve target project
         id: project_id
         run: |
-          if [ "${{ inputs.env }}" = "dev" ]; then
+          if [ -n "${{ inputs.artifact_project_id }}" ]; then
+            PROJECT="${{ inputs.artifact_project_id }}"
+
+          elif [ "${{ inputs.env }}" = "dev" ] || [ "${{ inputs.env }}" = "develop" ]; then
             PROJECT="${{ secrets.PROJECT_ID }}"
+
           else
             PROJECT="${{ secrets.PROD_PROJECT_ID }}"
           fi
+
+          if [ -z "$PROJECT" ]; then
+            echo "❌ ERROR: No project ID resolved"
+            exit 1
+          fi
+
           echo "project=$PROJECT" >> $GITHUB_OUTPUT
 
       - name: Deploy to Cloud Run
