@@ -2,12 +2,8 @@ name: Docker Build Workflow
 on:
   workflow_call:
     inputs:
-      environments:
-        description: "JSON array of environments"
-        required: false
-        type: string
-      gar_name:
-        description: "GAR repository name"
+      environment:
+        description: "Environment to deploy to"
         required: true
         type: string
       docker_build_args:
@@ -18,7 +14,6 @@ on:
         required: true
         type: string
 
-
 env:
   PROJECT_ID: ${{ secrets.PROJECT_ID }}
   GAR_LOCATION: ${{ secrets.GAR_LOCATION }}
@@ -27,22 +22,18 @@ env:
 
 jobs:
   build:
-    name: Build and Push Release Image
+    name: Build and Push Docker Image
     runs-on: ubuntu-latest
 
     permissions:
       contents: read
       id-token: write
 
-    strategy:
-      matrix:
-        environment: ${{ fromJson(inputs.environments) }}
-
-    environment: ${{ matrix.environment }}
+    environment: ${{ inputs.environment }}
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Read version
         id: getversion
@@ -92,5 +83,5 @@ jobs:
           GAR_NAME: ${{ secrets.GAR_NAME }}
         run: |
           IMAGE="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${GAR_NAME}/${VERSION}"
-          docker build -t "${IMAGE}:${GITHUB_SHA}" -t "${IMAGE}:latest" ${{ inputs.build_args }} ./
+          docker build -t "${IMAGE}:${GITHUB_SHA}" -t "${IMAGE}:latest" ${{ inputs.docker_build_args }} ./
           docker push --all-tags '${{ env.GAR_LOCATION }}'-docker.pkg.dev/'${{ env.PROJECT_ID }}'/'${{ env.GAR_NAME }}'/${{ steps.getversion.outputs.version }}
