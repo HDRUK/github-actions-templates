@@ -81,6 +81,7 @@ jobs:
           GAR_LOCATION: ${{ secrets.GAR_LOCATION }}
           PROJECT_ID: ${{ secrets.PROJECT_ID }}
           GAR_NAME: ${{ secrets.GAR_NAME }}
+          COMPOSER_AUTH: ${{secrets.COMPOSER_AUTH }}
         run: |
           IMAGE="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${GAR_NAME}/${VERSION}"
           docker build -t "${IMAGE}:${GITHUB_SHA}" -t "${IMAGE}:latest" ${{ inputs.docker_build_args }} ./
