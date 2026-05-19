@@ -85,4 +85,3 @@ jobs:
         run: |
           IMAGE="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${GAR_NAME}/${VERSION}"
           docker build -t "${IMAGE}:${GITHUB_SHA}" -t "${IMAGE}:latest" ${{ inputs.docker_build_args }} ./
-          docker push --all-tags '${{ env.GAR_LOCATION }}'-docker.pkg.dev/'${{ env.PROJECT_ID }}'/'${{ env.GAR_NAME }}'/${{ steps.getversion.outputs.version }}
