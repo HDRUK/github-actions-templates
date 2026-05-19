@@ -82,6 +82,10 @@ jobs:
           PROJECT_ID: ${{ secrets.PROJECT_ID }}
           GAR_NAME: ${{ secrets.GAR_NAME }}
           COMPOSER_AUTH: ${{ secrets.COMPOSER_AUTH }}
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          NEXT_PUBLIC_KEYCLOAK_TEST_PASSWORD: ${{ secrets.NEXT_PUBLIC_KEYCLOAK_TEST_PASSWORD }}
+          IDVT_SUPPLIER_API_KEY: ${{ secrets.IDVT_SUPPLIER_API_KEY }}
+          NEXT_PUBLIC_KEYCLOAK_CLIENT_SECRET: ${{ secrets.NEXT_PUBLIC_KEYCLOAK_CLIENT_SECRET }}
         run: |
           IMAGE="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${GAR_NAME}/${VERSION}"
           docker build -t "${IMAGE}:${GITHUB_SHA}" -t "${IMAGE}:latest" ${{ inputs.docker_build_args }} ./
