@@ -48,7 +48,7 @@ jobs:
       - name: Resolve image tag
         id: resolve_tag
         run: |
-          if [ "${{ inputs.env }}" = "dev" ] || [ "${{ inputs.env }}" = "develop" ]; then
+          if [[ "${{ inputs.env }}" == dev* ]]; then
             TAG=$(awk -F'"' '/^appVersion:/ {print $2}' ${{ inputs.chart_path }})
           else
             TAG="${{ inputs.tag_version }}"
