@@ -75,6 +75,16 @@ jobs:
           username: oauth2accesstoken
           password: ${{ steps.auth.outputs.access_token }}
 
+      - name: Generate GitHub App token
+        id: generate-deployment-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.DEPLOY_APP_ID }}
+          private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
+          owner: HDRUK
+          repositories: |
+            ${{ github.event.repository.name }}
+
       - name: Build & Push Image
         env:
           VERSION: ${{ steps.getversion.outputs.version }}
@@ -82,6 +92,7 @@ jobs:
           PROJECT_ID: ${{ secrets.PROJECT_ID }}
           GAR_NAME: ${{ secrets.GAR_NAME }}
           COMPOSER_AUTH: ${{secrets.COMPOSER_AUTH }}
+          GITHUB_TOKEN: ${{ steps.generate-deployment-token.outputs.token }}
         run: |
           IMAGE="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${GAR_NAME}/${VERSION}"
           docker build -t "${IMAGE}:${GITHUB_SHA}" -t "${IMAGE}:latest" ${{ inputs.docker_build_args }} ./
