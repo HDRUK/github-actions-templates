@@ -18,7 +18,7 @@ env:
   PROJECT_ID: ${{ secrets.PROJECT_ID }}
   GAR_LOCATION: ${{ secrets.GAR_LOCATION }}
   SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-  SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+  SLACK_CHANNEL: ${{ secrets.GITHUBACTIONS_SLACK_CHANNEL }}
 
 jobs:
   build:
