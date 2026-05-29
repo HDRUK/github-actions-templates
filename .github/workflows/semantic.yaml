@@ -82,5 +82,5 @@ jobs:
           git merge --squash origin/main || true
           git checkout --theirs . || true
           git add .
-          git commit --allow-empty -m "sync: update dev with latest main changes from release ${RELEASE_VERSION} (squash sync) [skip ci]"
+          git commit --allow-empty -m "sync: update dev with latest main changes from release ${RELEASE_VERSION} (squash sync)"
           git push origin dev
