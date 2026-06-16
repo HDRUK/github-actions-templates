@@ -72,10 +72,4 @@ jobs:
 
     # Deploy the infrastructure
     - name: Terraform Apply
-      if: ${{ github.event.inputs.step_to_run == 'apply' }}
       run: terraform apply -auto-approve -input=false
-
-    # Deploy the targeted infrastructure
-    - name: Targeted Apply Targeted
-      if: ${{ github.event.inputs.step_to_run == 'targeted-apply' }} 
-      run: terraform apply -target="${{ github.event.inputs.target_resource }}"
