@@ -1,0 +1,187 @@
+name: Jira Fix Version Workflow
+
+# Self-contained reusable workflow: tags Jira tickets with a "fix version".
+#
+# Designed to run from a temporary release branch (release/X.Y.Z). It:
+#   1. Derives the fix-version name from the branch (release/1.12.0 -> 1.12.0).
+#   2. Diffs the branch against the last release tag (git log <last-tag>..HEAD)
+#      and extracts the Jira issue keys referenced in those commits.
+#   3. For each project found: ensures the fix version exists in Jira and adds
+#      it to every referenced ticket.
+#
+# No Node / semantic-release / scripts required in the calling repo — only git,
+# curl and jq (all preinstalled on ubuntu-latest). Portable to any repo.
+#
+# REQUIRED SECRETS (org-level recommended, passed with `secrets: inherit`):
+#   - RELEASE_JIRA_BASE_URL   e.g. https://hdruk.atlassian.net
+#   - RELEASE_JIRA_USER       Jira account email
+#   - RELEASE_JIRA_TOKEN      Jira API token
+#
+# Example caller (.github/workflows/jira-fix-version.yml):
+#   on:
+#     push:
+#       branches: ["release/*"]
+#   jobs:
+#     jira:
+#       uses: HDRUK/github-actions-templates/.github/workflows/jira-fix-version.yaml@main
+#       with:
+#         jira_projects: "DP"        # or "DP,GAT,REGISTRY"
+#       secrets: inherit
+
+on:
+  workflow_call:
+    inputs:
+      jira_projects:
+        description: "Comma-separated Jira project keys to tag (e.g. DP or DP,GAT,REGISTRY)"
+        required: true
+        type: string
+      dry_run:
+        description: "If true, only log what would change and do not write to Jira"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  jira-fix-version:
+    name: Tag Jira fix version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          # Full history + tags so we can diff against the last release tag.
+          fetch-depth: 0
+
+      - name: Extract version from branch
+        id: ver
+        run: |
+          BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+          echo "Current branch: $BRANCH_NAME"
+
+          if [[ "$BRANCH_NAME" == release/* ]]; then
+            VERSION="${BRANCH_NAME#release/}"
+            VERSION="${VERSION#v}"   # strip leading v if present
+            echo "Detected release branch. Version: $VERSION"
+          else
+            echo "ERROR: this workflow must run on a release/* branch (got: $BRANCH_NAME)"
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve release range
+        id: range
+        run: |
+          BASE=$(git tag -l | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+          if [ -n "$BASE" ]; then
+            RANGE="$BASE..HEAD"
+          else
+            RANGE="HEAD"
+          fi
+          echo "Base release tag: ${BASE:-<none>}"
+          echo "Commit range    : $RANGE"
+          echo "range=$RANGE" >> "$GITHUB_OUTPUT"
+
+      - name: Extract Jira issue keys
+        id: keys
+        env:
+          PROJECTS: ${{ inputs.jira_projects }}
+          RANGE: ${{ steps.range.outputs.range }}
+        run: |
+          MESSAGES=$(git log $RANGE --format='%s%n%b')
+
+          ALL=""
+          IFS=',' read -ra PROJ <<< "$PROJECTS"
+          for raw in "${PROJ[@]}"; do
+            P=$(echo "$raw" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
+            [ -z "$P" ] && continue
+            FOUND=$(printf '%s\n' "$MESSAGES" | grep -oE "\b${P}-[0-9]+\b" || true)
+            [ -n "$FOUND" ] && ALL="${ALL}${FOUND}"$'\n'
+          done
+
+          KEYS=$(printf '%s' "$ALL" | grep -E '.' | sort -u | tr '\n' ' ' | sed 's/ *$//' || true)
+          if [ -z "$KEYS" ]; then
+            echo "No matching Jira issues in $RANGE for projects: $PROJECTS"
+          else
+            echo "Issues to tag: $KEYS"
+          fi
+          echo "keys=$KEYS" >> "$GITHUB_OUTPUT"
+
+      - name: Create Jira fix versions
+        if: ${{ !inputs.dry_run && steps.keys.outputs.keys != '' }}
+        env:
+          JIRA_SERVER: ${{ secrets.RELEASE_JIRA_BASE_URL }}
+          JIRA_USER: ${{ secrets.RELEASE_JIRA_USER }}
+          JIRA_TOKEN: ${{ secrets.RELEASE_JIRA_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          KEYS: ${{ steps.keys.outputs.keys }}
+        run: |
+          if [ -z "${JIRA_SERVER:-}" ] || [ -z "${JIRA_USER:-}" ] || [ -z "${JIRA_TOKEN:-}" ]; then
+            echo "ERROR: JIRA_BASE_URL, JIRA_USER and JIRA_TOKEN secrets must be set."
+            exit 1
+          fi
+          JIRA_SERVER="${JIRA_SERVER%/}"
+          API="$JIRA_SERVER/rest/api/3"
+          AUTH=(-u "$JIRA_USER:$JIRA_TOKEN")
+
+          # Unique projects derived from the issue key prefixes.
+          PROJECTS=$(printf '%s\n' $KEYS | sed -E 's/-[0-9]+$//' | sort -u)
+          for P in $PROJECTS; do
+            PID=$(curl -fsS "${AUTH[@]}" -H "Accept: application/json" "$API/project/$P" | jq -r '.id')
+            if [ -z "$PID" ] || [ "$PID" = "null" ]; then
+              echo "[$P] ERROR: could not resolve Jira project"
+              exit 1
+            fi
+
+            EXISTS=$(curl -fsS "${AUTH[@]}" -H "Accept: application/json" "$API/project/$P/versions" \
+              | jq -r --arg V "$VERSION" 'any(.name == $V)')
+            if [ "$EXISTS" = "true" ]; then
+              echo "[$P] fix version '$VERSION' already exists"
+            else
+              BODY=$(jq -n --arg n "$VERSION" --argjson pid "$PID" '{name:$n, projectId:$pid, released:false}')
+              curl -fsS "${AUTH[@]}" -X POST \
+                -H "Accept: application/json" -H "Content-Type: application/json" \
+                -d "$BODY" "$API/version" > /dev/null
+              echo "[$P] created fix version '$VERSION'"
+            fi
+          done
+
+      - name: Add fix version to issues
+        if: ${{ !inputs.dry_run && steps.keys.outputs.keys != '' }}
+        env:
+          JIRA_SERVER: ${{ secrets.RELEASE_JIRA_BASE_URL }}
+          JIRA_USER: ${{ secrets.RELEASE_JIRA_USER }}
+          JIRA_TOKEN: ${{ secrets.RELEASE_JIRA_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          KEYS: ${{ steps.keys.outputs.keys }}
+        run: |
+          JIRA_SERVER="${JIRA_SERVER%/}"
+          API="$JIRA_SERVER/rest/api/3"
+          AUTH=(-u "$JIRA_USER:$JIRA_TOKEN")
+
+          BODY=$(jq -n --arg v "$VERSION" '{update:{fixVersions:[{add:{name:$v}}]}}')
+          FAILED=0
+          for KEY in $KEYS; do
+            CODE=$(curl -sS -o /dev/null -w '%{http_code}' "${AUTH[@]}" -X PUT \
+              -H "Accept: application/json" -H "Content-Type: application/json" \
+              -d "$BODY" "$API/issue/$KEY")
+            if [ "$CODE" = "204" ]; then
+              echo "tagged $KEY -> $VERSION"
+            else
+              echo "WARNING: failed to tag $KEY (HTTP $CODE)"
+              FAILED=1
+            fi
+          done
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo "One or more issues could not be tagged."
+            exit 1
+          fi
+
+      - name: Dry-run summary
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "DRY RUN — no changes made."
+          echo "Would set fix version '${{ steps.ver.outputs.version }}' on: ${{ steps.keys.outputs.keys || '(no issues found)' }}"
