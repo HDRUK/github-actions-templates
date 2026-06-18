@@ -109,6 +109,38 @@ jobs:
           fi
           echo "keys=$KEYS" >> "$GITHUB_OUTPUT"
 
+      - name: Verify Jira connectivity
+        if: ${{ !inputs.dry_run && steps.keys.outputs.keys != '' }}
+        env:
+          JIRA_SERVER: ${{ secrets.RELEASE_JIRA_BASE_URL }}
+          JIRA_USER: ${{ secrets.RELEASE_JIRA_USER }}
+          JIRA_TOKEN: ${{ secrets.RELEASE_JIRA_TOKEN }}
+        run: |
+          if [ -z "${JIRA_SERVER:-}" ] || [ -z "${JIRA_USER:-}" ] || [ -z "${JIRA_TOKEN:-}" ]; then
+            echo "ERROR: RELEASE_JIRA_BASE_URL, RELEASE_JIRA_USER and RELEASE_JIRA_TOKEN must be set."
+            exit 1
+          fi
+          JIRA_SERVER="${JIRA_SERVER%/}"
+
+          # Structural checks (lengths only — values stay masked). A length that
+          # is one bigger than expected usually means a trailing newline/CR.
+          echo "base url length : ${#JIRA_SERVER}"
+          echo "user length     : ${#JIRA_USER}"
+          echo "token length    : ${#JIRA_TOKEN}"
+          case "$JIRA_SERVER" in *[[:space:]]) echo "WARN: base url has trailing whitespace/newline";; esac
+          case "$JIRA_USER"   in *[[:space:]]) echo "WARN: user has trailing whitespace/newline";; esac
+          case "$JIRA_TOKEN"  in *[[:space:]]) echo "WARN: token has trailing whitespace/newline";; esac
+
+          code=$(curl -sS -o /tmp/jira_body -w '%{http_code}' \
+            -u "$JIRA_USER:$JIRA_TOKEN" -H "Accept: application/json" \
+            "$JIRA_SERVER/rest/api/3/myself" || true)
+          echo "GET /myself -> HTTP $code"
+          echo "response (first 300 chars):"; head -c 300 /tmp/jira_body || true; echo ""
+          if [ "$code" != "200" ]; then
+            echo "Auth/connectivity failed. 401 = wrong/whitespace email or token; 404 = wrong base URL."
+            exit 1
+          fi
+
       - name: Create Jira fix versions
         if: ${{ !inputs.dry_run && steps.keys.outputs.keys != '' }}
         env:
@@ -129,11 +161,13 @@ jobs:
           # Unique projects derived from the issue key prefixes.
           PROJECTS=$(printf '%s\n' $KEYS | sed -E 's/-[0-9]+$//' | sort -u)
           for P in $PROJECTS; do
-            PID=$(curl -fsS "${AUTH[@]}" -H "Accept: application/json" "$API/project/$P" | jq -r '.id')
-            if [ -z "$PID" ] || [ "$PID" = "null" ]; then
-              echo "[$P] ERROR: could not resolve Jira project"
+            code=$(curl -sS -o /tmp/proj -w '%{http_code}' "${AUTH[@]}" -H "Accept: application/json" "$API/project/$P")
+            if [ "$code" != "200" ]; then
+              echo "[$P] GET /project/$P -> HTTP $code"
+              head -c 300 /tmp/proj; echo ""
               exit 1
             fi
+            PID=$(jq -r '.id' /tmp/proj)
 
             EXISTS=$(curl -fsS "${AUTH[@]}" -H "Accept: application/json" "$API/project/$P/versions" \
               | jq -r --arg V "$VERSION" 'any(.name == $V)')
