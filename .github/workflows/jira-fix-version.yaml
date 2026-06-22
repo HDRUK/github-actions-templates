@@ -1,21 +1,13 @@
 name: Jira Fix Version Workflow
 
-# Self-contained reusable workflow: tags Jira tickets with a "fix version".
+# Reusable workflow: tags Jira tickets with a release "fix version".
 #
-# Designed to run from a temporary release branch (release/X.Y.Z). It:
+# Runs from a release branch (release/X.Y.Z). It:
 #   1. Derives the fix-version name from the branch (release/1.12.0 -> 1.12.0).
 #   2. Diffs the branch against the last release tag (git log <last-tag>..HEAD)
 #      and extracts the Jira issue keys referenced in those commits.
 #   3. For each project found: ensures the fix version exists in Jira and adds
 #      it to every referenced ticket.
-#
-# No Node / semantic-release / scripts required in the calling repo — only git,
-# curl and jq (all preinstalled on ubuntu-latest). Portable to any repo.
-#
-# REQUIRED SECRETS (org-level recommended, passed with `secrets: inherit`):
-#   - RELEASE_JIRA_BASE_URL   e.g. https://hdruk.atlassian.net
-#   - RELEASE_JIRA_USER       Jira account email
-#   - RELEASE_JIRA_TOKEN      Jira API token
 #
 # Example caller (.github/workflows/jira-fix-version.yml):
 #   on:
@@ -32,7 +24,7 @@ on:
   workflow_call:
     inputs:
       jira_projects:
-        description: "Comma-separated Jira project keys to tag (e.g. DP or DP,GAT,REGISTRY)"
+        description: "Comma-separated Jira project keys to tag (DP or DP,GAT,REGISTRY)"
         required: true
         type: string
       dry_run:
@@ -109,54 +101,40 @@ jobs:
           fi
           echo "keys=$KEYS" >> "$GITHUB_OUTPUT"
 
-      - name: Verify Jira connectivity
+      - name: Check Jira credentials
         if: ${{ !inputs.dry_run && steps.keys.outputs.keys != '' }}
         env:
-          JIRA_SERVER: ${{ secrets.RELEASE_JIRA_BASE_URL }}
-          JIRA_USER: ${{ secrets.RELEASE_JIRA_USER }}
+          JIRA_CLOUD_ID: ${{ secrets.RELEASE_JIRA_CLOUD_ID }}
           JIRA_TOKEN: ${{ secrets.RELEASE_JIRA_TOKEN }}
         run: |
-          if [ -z "${JIRA_SERVER:-}" ] || [ -z "${JIRA_USER:-}" ] || [ -z "${JIRA_TOKEN:-}" ]; then
-            echo "ERROR: RELEASE_JIRA_BASE_URL, RELEASE_JIRA_USER and RELEASE_JIRA_TOKEN must be set."
+          # Auth is a service-account scoped tokens must be
+          # sent as a Bearer header against the api.atlassian.com gateway with the cloud id in the path 
+          if [ -z "${JIRA_CLOUD_ID:-}" ] || [ -z "${JIRA_TOKEN:-}" ]; then
+            echo "ERROR: RELEASE_JIRA_CLOUD_ID and RELEASE_JIRA_TOKEN must be set."
             exit 1
           fi
-          JIRA_SERVER="${JIRA_SERVER%/}"
-
-          # Structural checks (lengths only — values stay masked). A length that
-          # is one bigger than expected usually means a trailing newline/CR.
-          echo "base url length : ${#JIRA_SERVER}"
-          echo "user length     : ${#JIRA_USER}"
-          echo "token length    : ${#JIRA_TOKEN}"
-          case "$JIRA_SERVER" in *[[:space:]]) echo "WARN: base url has trailing whitespace/newline";; esac
-          case "$JIRA_USER"   in *[[:space:]]) echo "WARN: user has trailing whitespace/newline";; esac
-          case "$JIRA_TOKEN"  in *[[:space:]]) echo "WARN: token has trailing whitespace/newline";; esac
-
-          code=$(curl -sS -o /tmp/jira_body -w '%{http_code}' \
-            -u "$JIRA_USER:$JIRA_TOKEN" -H "Accept: application/json" \
-            "$JIRA_SERVER/rest/api/3/myself" || true)
-          echo "GET /myself -> HTTP $code"
-          echo "response (first 300 chars):"; head -c 300 /tmp/jira_body || true; echo ""
+          code=$(curl -sS -o /tmp/jira_me -w '%{http_code}' \
+            -H "Authorization: Bearer $JIRA_TOKEN" -H "Accept: application/json" \
+            "https://api.atlassian.com/ex/jira/$JIRA_CLOUD_ID/rest/api/3/myself" || true)
           if [ "$code" != "200" ]; then
-            echo "Auth/connectivity failed. 401 = wrong/whitespace email or token; 404 = wrong base URL."
+            echo "ERROR: Jira authentication failed (GET /myself -> HTTP $code)."
+            echo "  401 = wrong/expired token, or trailing whitespace in the secret"
+            echo "  404 = wrong RELEASE_JIRA_CLOUD_ID"
+            echo "  secret lengths: cloud_id=${#JIRA_CLOUD_ID} token=${#JIRA_TOKEN}"
             exit 1
           fi
+          echo "Jira authentication OK."
 
       - name: Create Jira fix versions
         if: ${{ !inputs.dry_run && steps.keys.outputs.keys != '' }}
         env:
-          JIRA_SERVER: ${{ secrets.RELEASE_JIRA_BASE_URL }}
-          JIRA_USER: ${{ secrets.RELEASE_JIRA_USER }}
+          JIRA_CLOUD_ID: ${{ secrets.RELEASE_JIRA_CLOUD_ID }}
           JIRA_TOKEN: ${{ secrets.RELEASE_JIRA_TOKEN }}
           VERSION: ${{ steps.ver.outputs.version }}
           KEYS: ${{ steps.keys.outputs.keys }}
         run: |
-          if [ -z "${JIRA_SERVER:-}" ] || [ -z "${JIRA_USER:-}" ] || [ -z "${JIRA_TOKEN:-}" ]; then
-            echo "ERROR: JIRA_BASE_URL, JIRA_USER and JIRA_TOKEN secrets must be set."
-            exit 1
-          fi
-          JIRA_SERVER="${JIRA_SERVER%/}"
-          API="$JIRA_SERVER/rest/api/3"
-          AUTH=(-u "$JIRA_USER:$JIRA_TOKEN")
+          API="https://api.atlassian.com/ex/jira/$JIRA_CLOUD_ID/rest/api/3"
+          AUTH=(-H "Authorization: Bearer $JIRA_TOKEN")
 
           # Unique projects derived from the issue key prefixes.
           PROJECTS=$(printf '%s\n' $KEYS | sed -E 's/-[0-9]+$//' | sort -u)
@@ -169,44 +147,60 @@ jobs:
             fi
             PID=$(jq -r '.id' /tmp/proj)
 
-            EXISTS=$(curl -fsS "${AUTH[@]}" -H "Accept: application/json" "$API/project/$P/versions" \
-              | jq -r --arg V "$VERSION" 'any(.name == $V)')
-            if [ "$EXISTS" = "true" ]; then
-              echo "[$P] fix version '$VERSION' already exists"
-            else
-              BODY=$(jq -n --arg n "$VERSION" --argjson pid "$PID" '{name:$n, projectId:$pid, released:false}')
-              curl -fsS "${AUTH[@]}" -X POST \
-                -H "Accept: application/json" -H "Content-Type: application/json" \
-                -d "$BODY" "$API/version" > /dev/null
-              echo "[$P] created fix version '$VERSION'"
+            vcode=$(curl -sS -o /tmp/versions -w '%{http_code}' "${AUTH[@]}" -H "Accept: application/json" "$API/project/$P/versions")
+            if [ "$vcode" != "200" ]; then
+              echo "[$P] GET /project/$P/versions -> HTTP $vcode"
+              head -c 300 /tmp/versions; echo ""
+              exit 1
             fi
+
+            if [ "$(jq -r --arg V "$VERSION" 'any(.name == $V)' /tmp/versions)" = "true" ]; then
+              echo "[$P] fix version '$VERSION' already exists"
+              continue
+            fi
+
+            BODY=$(jq -n --arg n "$VERSION" --argjson pid "$PID" '{name:$n, projectId:$pid, released:false}')
+            ccode=$(curl -sS -o /tmp/created -w '%{http_code}' "${AUTH[@]}" -X POST \
+              -H "Accept: application/json" -H "Content-Type: application/json" \
+              -d "$BODY" "$API/version")
+            if [ "$ccode" != "201" ] && [ "$ccode" != "200" ]; then
+              echo "[$P] POST /version -> HTTP $ccode (needs 'Administer Projects' to create versions)"
+              head -c 300 /tmp/created; echo ""
+              exit 1
+            fi
+            echo "[$P] created fix version '$VERSION'"
           done
 
       - name: Add fix version to issues
         if: ${{ !inputs.dry_run && steps.keys.outputs.keys != '' }}
         env:
-          JIRA_SERVER: ${{ secrets.RELEASE_JIRA_BASE_URL }}
-          JIRA_USER: ${{ secrets.RELEASE_JIRA_USER }}
+          JIRA_CLOUD_ID: ${{ secrets.RELEASE_JIRA_CLOUD_ID }}
           JIRA_TOKEN: ${{ secrets.RELEASE_JIRA_TOKEN }}
           VERSION: ${{ steps.ver.outputs.version }}
           KEYS: ${{ steps.keys.outputs.keys }}
         run: |
-          JIRA_SERVER="${JIRA_SERVER%/}"
-          API="$JIRA_SERVER/rest/api/3"
-          AUTH=(-u "$JIRA_USER:$JIRA_TOKEN")
+          API="https://api.atlassian.com/ex/jira/$JIRA_CLOUD_ID/rest/api/3"
+          AUTH=(-H "Authorization: Bearer $JIRA_TOKEN")
 
           BODY=$(jq -n --arg v "$VERSION" '{update:{fixVersions:[{add:{name:$v}}]}}')
           FAILED=0
           for KEY in $KEYS; do
-            CODE=$(curl -sS -o /dev/null -w '%{http_code}' "${AUTH[@]}" -X PUT \
+            CODE=$(curl -sS -o /tmp/put -w '%{http_code}' "${AUTH[@]}" -X PUT \
               -H "Accept: application/json" -H "Content-Type: application/json" \
               -d "$BODY" "$API/issue/$KEY")
-            if [ "$CODE" = "204" ]; then
-              echo "tagged $KEY -> $VERSION"
-            else
-              echo "WARNING: failed to tag $KEY (HTTP $CODE)"
-              FAILED=1
-            fi
+            case "$CODE" in
+              204)
+                echo "tagged $KEY -> $VERSION"
+                ;;
+              404)
+                # Issue doesn't exist (a placeholder like DP-0000) skip, don't fail.
+                echo "WARNING: $KEY not found in Jira skipping (placeholder/mock reference?)"
+                ;;
+              *)
+                echo "ERROR: failed to tag $KEY (HTTP $CODE): $(head -c 200 /tmp/put)"
+                FAILED=1
+                ;;
+            esac
           done
 
           if [ "$FAILED" -ne 0 ]; then
@@ -217,5 +211,5 @@ jobs:
       - name: Dry-run summary
         if: ${{ inputs.dry_run }}
         run: |
-          echo "DRY RUN — no changes made."
+          echo "DRY RUN no changes made."
           echo "Would set fix version '${{ steps.ver.outputs.version }}' on: ${{ steps.keys.outputs.keys || '(no issues found)' }}"
