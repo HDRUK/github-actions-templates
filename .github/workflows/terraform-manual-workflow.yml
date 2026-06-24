@@ -87,4 +87,4 @@ jobs:
     # Deploy the targeted infrastructure
     - name: Targeted Apply Targeted
       if: ${{ inputs.step_to_run == 'targeted-apply' }} 
-      run: terraform apply -target="${{ inputs.target_resource }}"
+      run: terraform apply -target="${{ inputs.target_resource }}" -auto-approve -input=false
