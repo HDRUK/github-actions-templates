@@ -1,0 +1,59 @@
+name: Build Cloud Function
+run-name: ${{ github.actor }} triggered build pipeline
+
+on:
+  workflow_call:
+    inputs:
+      env:
+        required: true
+        type: string
+      chart_path:
+        required: true
+        type: string
+
+env:
+  PROJECT_ID: "${{ secrets.PROJECT_ID }}"
+  SLACK_WEBHOOK_URL: "${{ secrets.SLACK_WEBHOOK_URL}}"
+  SLACK_CHANNEL: "${{ secrets.GITHUBACTIONS_SLACK_CHANNEL }}"
+
+jobs:
+  build:
+    permissions:
+      contents: read
+      id-token: write
+
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Read version
+        id: getversion
+        run: |
+          VERSION=$(awk -F'"' '/^appVersion:/ {print $2}' "${{ inputs.chart_path }}")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Google Auth
+        id: auth
+        uses: "google-github-actions/auth@v2"
+        with:
+          token_format: "access_token"
+          project_id: "${{ secrets.PROJECT_ID }}"
+          workload_identity_provider: "${{ secrets.WIF_PROVIDER }}"
+          service_account: "${{ secrets.WIF_SERVICE_ACCOUNT }}"
+
+      - name: "Set up Cloud SDK"
+        id: setupsdk
+        uses: "google-github-actions/setup-gcloud@v1"
+        with:
+          version: ">= 363.0.0"
+
+      - name: Zip the application
+        id: zipapplication
+        run: |
+          rm -rf ${{ secrets.ARCHIVE_NAME }}-${{ steps.getversion.outputs.version }}.zip
+          zip -r ${{ secrets.ARCHIVE_NAME }}-${{ steps.getversion.outputs.version }}.zip .
+
+      - name: "Use gcloud CLI to upload the source to the bucket"
+        run: gsutil -h x-goog-meta-github-sha:${{ github.sha }} cp ${{ secrets.ARCHIVE_NAME }}-${{ steps.getversion.outputs.version }}.zip '${{ secrets.BUCKET_PATH }}'
