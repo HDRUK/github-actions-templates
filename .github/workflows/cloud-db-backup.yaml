@@ -6,6 +6,9 @@ on:
       env:
         required: true
         type: string
+      tag_version:
+        required: false
+        type: string
 
 jobs:
   build:
@@ -30,7 +33,7 @@ jobs:
             gcloud sql backups create \
             --instance=${{ secrets.CLOUDSQL_INSTANCE }} \
             --location=europe-west1 \
-            --description="Github Actions Backup $(date +%F)"
+            --description="Github Actions Backup before ${{ inputs.tag_version }} deployment"
 
       - name: Delete Cloud SQL backups older than 7 days
         run: |
@@ -60,7 +63,7 @@ jobs:
                 echo "Deleting backup $ID ($START_TIME)"
 
               gcloud sql backups delete "$ID" \
-                --instance="${INSTANCE_NAME}" \
+                --instance=${{ secrets.CLOUDSQL_INSTANCE }} \
                 --quiet
             fi
             done
