@@ -1,0 +1,66 @@
+name: Cloud SQL Backup Workflow
+
+on:
+  workflow_call:
+    inputs:
+      env:
+        required: true
+        type: string
+
+jobs:
+  build:
+    permissions:
+      contents: read
+      id-token: write
+
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    steps:
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Create Cloud SQL backup
+        run: |
+            gcloud sql backups create \
+            --instance=${{ secrets.CLOUDSQL_INSTANCE }} \
+            --location=europe-west1 \
+            --description="Github Actions Backup $(date +%F)"
+
+      - name: Delete Cloud SQL backups older than 7 days
+        run: |
+            CUTOFF=$(date -u -d "7 days ago" +%s)
+
+            gcloud sql backups list \
+            --instance=${{ secrets.CLOUDSQL_INSTANCE }} \
+            --format=json > backups.json
+
+            jq -c '.[]' backups.json | while read -r backup; do
+            ID=$(echo "$backup" | jq -r '.id')
+            START_TIME=$(echo "$backup" | jq -r '.windowStartTime // empty')
+
+            echo "Processing backup: $ID"
+            echo "START_TIME: $START_TIME"
+
+            if [ -z "$START_TIME" ]; then
+                echo "Skipping $ID (no timestamp)"
+                continue
+            fi
+
+            BACKUP_TS=$(date -u -d "$START_TIME" +%s)
+
+            echo "BACKUP_TS: $BACKUP_TS"
+
+            if [ "$BACKUP_TS" -lt "$CUTOFF" ]; then
+                echo "Deleting backup $ID ($START_TIME)"
+
+              gcloud sql backups delete "$ID" \
+                --instance="${INSTANCE_NAME}" \
+                --quiet
+            fi
+            done
