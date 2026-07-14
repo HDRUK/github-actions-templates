@@ -77,7 +77,7 @@ jobs:
           SERVICE_NAME: "${{ secrets.SERVICE_NAME }}"
           SERVICE_REGION: "${{ secrets.SERVICE_REGION }}"
         with:
-          args: functions deploy '${{ env.SERVICE_NAME }}' --source='${{ secrets.BUCKET_PATH }}/${{ secrets.ARCHIVE_NAME }}' --region='${{ env.SERVICE_REGION }}' --project='${{ env.PROJECT_ID }}' --gen2 --trigger-http
+          args: functions deploy '${{ env.SERVICE_NAME }}' --source='${{ secrets.BUCKET_PATH }}/${{ secrets.ARCHIVE_NAME }}' --region='${{ env.SERVICE_REGION }}' --project='${{ env.PROJECT_ID }}' --gen2 --runtime=python314 --trigger-http
 
       - name: Run Notification
         id: runnotificationsent
