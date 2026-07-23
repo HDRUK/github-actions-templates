@@ -93,7 +93,9 @@ jobs:
             [ -n "$FOUND" ] && ALL="${ALL}${FOUND}"$'\n'
           done
 
-          KEYS=$(printf '%s' "$ALL" | grep -E '.' | sort -u | tr '\n' ' ' | sed 's/ *$//' || true)
+          # Drop placeholder/mock references used in docs and templates:
+          #   -0000 (any all-zero number) and -1234
+          KEYS=$(printf '%s' "$ALL" | grep -E '.' | grep -viE '\-(0+|1234)$' | sort -u | tr '\n' ' ' | sed 's/ *$//' || true)
           if [ -z "$KEYS" ]; then
             echo "No matching Jira issues in $RANGE for projects: $PROJECTS"
           else
