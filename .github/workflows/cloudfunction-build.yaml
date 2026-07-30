@@ -1,0 +1,45 @@
+name: Build Cloud Function
+run-name: ${{ github.actor }} triggered deploy pipeline
+
+on:
+  workflow_call:
+    inputs:
+      env:
+        required: true
+        type: string
+
+jobs:
+  build:
+    permissions:
+      contents: read
+      id-token: write
+
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Google Auth
+        id: auth
+        uses: "google-github-actions/auth@v2"
+        with:
+          token_format: "access_token"
+          project_id: "${{ secrets.PROJECT_ID }}"
+          workload_identity_provider: "${{ secrets.WIF_PROVIDER }}"
+          service_account: "${{ secrets.WIF_SERVICE_ACCOUNT }}"
+
+      - name: "Set up Cloud SDK"
+        id: setupsdk
+        uses: "google-github-actions/setup-gcloud@v1"
+        with:
+          version: ">= 363.0.0"
+
+      - name: Zip the application
+        id: zipapplication
+        run: |
+          rm -rf ${{ secrets.ARCHIVE_NAME }}
+          zip -r ${{ secrets.ARCHIVE_NAME }} .
+
+      - name: "Use gcloud CLI to upload the source to the bucket"
+        run: gsutil -h x-goog-meta-github-sha:${{ github.sha }} cp ${{ secrets.ARCHIVE_NAME }} '${{ secrets.BUCKET_PATH }}'
