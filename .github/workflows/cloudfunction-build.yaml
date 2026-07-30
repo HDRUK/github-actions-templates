@@ -1,4 +1,4 @@
-name: Build and deploy Cloud Function
+name: Build Cloud Function
 run-name: ${{ github.actor }} triggered deploy pipeline
 
 on:
