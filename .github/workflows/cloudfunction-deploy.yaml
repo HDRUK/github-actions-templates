@@ -41,7 +41,7 @@ jobs:
           if [ -n "${{ inputs.tag_version }}" ]; then
             echo "source=${{ secrets.BUCKET_PATH }}/${{ secrets.ARCHIVE_NAME }}-${{ inputs.tag_version }}.zip" >> $GITHUB_OUTPUT
           else
-            LATEST=$(gsutil ls "${{ secrets.BUCKET_PATH }}/${{ secrets.ARCHIVE_NAME }}-*.zip" | sort -V | tail -n 1)
+            LATEST=$(gcloud storage ls "${{ secrets.BUCKET_PATH }}/${{ secrets.ARCHIVE_NAME }}-*.zip" | sort -V | tail -n 1)
             echo "source=$LATEST" >> $GITHUB_OUTPUT
           fi
 
