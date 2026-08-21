@@ -7,6 +7,9 @@ on:
       env:
         required: true
         type: string
+      chart_path:
+        required: true
+        type: string
 
 jobs:
   build:
@@ -19,6 +22,31 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+
+      - name: Read version
+        id: getversion
+        run: |
+          BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+
+          echo "Current branch: $BRANCH_NAME"
+
+          if [[ "$BRANCH_NAME" == release/* ]]; then
+            # Extract version from release branch name
+            VERSION="${BRANCH_NAME#release/}"
+            VERSION="${VERSION#v}"   # strip leading v if present
+            echo "Detected release branch. Version: $VERSION"
+          else
+            # Extract version from Helm chart
+            VERSION=$(awk -F'"' '/^appVersion:/ {print $2}' "${{ inputs.chart_path }}")
+            echo "Detected non-release branch. Version from chart: $VERSION"
+          fi
+
+          if [ -z "$VERSION" ]; then
+            echo "ERROR: Version could not be determined"
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Google Auth
         id: auth
@@ -38,8 +66,11 @@ jobs:
       - name: Zip the application
         id: zipapplication
         run: |
-          rm -rf ${{ secrets.ARCHIVE_NAME }}
-          zip -r ${{ secrets.ARCHIVE_NAME }} .
+          ARCHIVE="${{ secrets.ARCHIVE_NAME }}-${{ steps.getversion.outputs.version }}.zip"
+          echo "archive=$ARCHIVE" >> "$GITHUB_OUTPUT"
+          rm -f "$ARCHIVE"
+          zip -r "$ARCHIVE" .
 
-      - name: "Use gcloud CLI to upload the source to the bucket"
-        run: gsutil -h x-goog-meta-github-sha:${{ github.sha }} cp ${{ secrets.ARCHIVE_NAME }} '${{ secrets.BUCKET_PATH }}'
+      - name: Use gcloud CLI to upload the source to the bucket
+        run: |
+          gsutil -h x-goog-meta-github-sha:${{ github.sha }} cp "${{ steps.zipapplication.outputs.archive }}" '${{ secrets.BUCKET_PATH }}'

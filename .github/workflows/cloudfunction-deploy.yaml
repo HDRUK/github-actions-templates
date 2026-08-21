@@ -6,6 +6,9 @@ on:
       env:
         required: true
         type: string
+      tag_version:
+        required: false
+        type: string
 
 env:
   PROJECT_ID: "${{ secrets.PROJECT_ID }}"
@@ -32,15 +35,24 @@ jobs:
           workload_identity_provider: "${{ secrets.WIF_PROVIDER }}"
           service_account: "${{ secrets.WIF_SERVICE_ACCOUNT }}"
 
-      - name: Deploy to Cloud Functions
+      - name: Determine artifact to deploy
+        id: artifact
+        run: |
+          if [ -n "${{ inputs.tag_version }}" ]; then
+            echo "source=${{ secrets.BUCKET_PATH }}/${{ secrets.ARCHIVE_NAME }}-${{ inputs.tag_version }}.zip" >> $GITHUB_OUTPUT
+          else
+            LATEST=$(gsutil ls "${{ secrets.BUCKET_PATH }}/${{ secrets.ARCHIVE_NAME }}-*.zip" | sort -V | tail -n 1)
+            echo "source=$LATEST" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy Cloud Function
         uses: actions-hub/gcloud@540.0.0
-        id: deploy
         env:
           PROJECT_ID: ${{ secrets.PROJECT_ID }}
-          SERVICE_NAME: "${{ secrets.SERVICE_NAME }}"
-          SERVICE_REGION: "${{ secrets.SERVICE_REGION }}"
+          SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
+          SERVICE_REGION: ${{ secrets.SERVICE_REGION }}
         with:
-          args: functions deploy '${{ env.SERVICE_NAME }}' --source='${{ secrets.BUCKET_PATH }}/${{ secrets.ARCHIVE_NAME }}' --region='${{ env.SERVICE_REGION }}' --project='${{ env.PROJECT_ID }}' --gen2 --trigger-http
+          args: functions deploy '${{ env.SERVICE_NAME }}' --source='${{ steps.artifact.outputs.source }}' --region='${{ env.SERVICE_REGION }}' --project='${{ env.PROJECT_ID }}' --gen2 --trigger-http
 
       - name: Run Notification
         id: runnotificationsent
