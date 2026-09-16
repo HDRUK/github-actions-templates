@@ -38,6 +38,15 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Update to latest branch 
+        run: |
+          BRANCH=${GITHUB_REF_NAME}
+          git fetch origin ${BRANCH}
+          git checkout ${BRANCH}
+          git reset --hard origin/${BRANCH}
 
       - name: Read version
         id: getversion
