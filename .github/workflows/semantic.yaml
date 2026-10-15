@@ -6,7 +6,7 @@ on:
       chart_path:
         required: true
         type: string
-      environments:
+      environment:
         required: false
         type: string
         default: ""
