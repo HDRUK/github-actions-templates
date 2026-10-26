@@ -97,7 +97,7 @@ jobs:
               --base dev \
               --head "${SYNC_BRANCH}" \
               --title "chore(GAT-1234): sync main into dev after release ${RELEASE_VERSION}" \
-              --body "The automatic main to dev sync after release ${RELEASE_VERSION} hit merge conflicts. Resolve the conflicts in this PR, keeping dev's changes and applying main's hotfix changes."
+              --body "The automatic main to dev sync after release ${RELEASE_VERSION} hit merge conflicts. Resolve the conflicts in this PR, keeping dev's changes and applying main's hotfix changes then merge with a merge commit (not squash) to keep history."
           fi
 
           echo "::warning title=main to dev sync needs manual merge::Conflicts merging main into dev; opened PR from ${SYNC_BRANCH}"
