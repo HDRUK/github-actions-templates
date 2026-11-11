@@ -165,12 +165,25 @@ jobs:
             ccode=$(curl -sS -o /tmp/created -w '%{http_code}' "${AUTH[@]}" -X POST \
               -H "Accept: application/json" -H "Content-Type: application/json" \
               -d "$BODY" "$API/version")
-            if [ "$ccode" != "201" ] && [ "$ccode" != "200" ]; then
-              echo "[$P] POST /version -> HTTP $ccode (needs 'Administer Projects' to create versions)"
-              head -c 300 /tmp/created; echo ""
-              exit 1
+            if [ "$ccode" = "201" ] || [ "$ccode" = "200" ]; then
+              echo "[$P] created fix version '$VERSION'"
+              continue
             fi
-            echo "[$P] created fix version '$VERSION'"
+
+            # Race: another repo's run may have created the same version between
+            # our GET and POST. Re-check before failing.
+            if [ "$ccode" = "400" ] && \
+               curl -sS -o /tmp/versions -w '%{http_code}' "${AUTH[@]}" -H "Accept: application/json" "$API/project/$P/versions" | grep -q '^200$' && \
+               [ "$(jq -r --arg V "$VERSION" 'any(.name == $V)' /tmp/versions)" = "true" ]; then
+              echo "[$P] fix version '$VERSION' was created concurrently by another run; continuing"
+              continue
+            fi
+
+            HINT=""
+            case "$ccode" in 401|403) HINT=" (needs 'Administer Projects' to create versions)" ;; esac
+            echo "[$P] POST /version -> HTTP $ccode$HINT"
+            head -c 300 /tmp/created; echo ""
+            exit 1
           done
 
       - name: Add fix version to issues
