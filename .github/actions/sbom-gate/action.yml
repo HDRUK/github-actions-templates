@@ -1,0 +1,42 @@
+name: SBOM gate
+description: >
+  Decide which SBOM steps run from the SBOM_* repository/organisation variables.
+  Logic lives in scripts/sbom/sbom_lib.py (decide_gate) and is unit tested.
+
+inputs:
+  sbom_enabled:
+    required: false
+    default: ''
+  sbom_app_enabled:
+    required: false
+    default: ''
+  sbom_container_enabled:
+    required: false
+    default: ''
+  sbom_upload_ar:
+    required: false
+    default: ''
+
+outputs:
+  run_app:
+    description: Run the application-layer SBOM
+    value: ${{ steps.gate.outputs.run_app }}
+  run_container:
+    description: Run the container-layer SBOM
+    value: ${{ steps.gate.outputs.run_container }}
+  upload_ar:
+    description: Attach the container SBOM to Artifact Registry
+    value: ${{ steps.gate.outputs.upload_ar }}
+
+runs:
+  using: composite
+  steps:
+    - id: gate
+      shell: bash
+      env:
+        SBOM_ENABLED: ${{ inputs.sbom_enabled }}
+        SBOM_APP_ENABLED: ${{ inputs.sbom_app_enabled }}
+        SBOM_CONTAINER_ENABLED: ${{ inputs.sbom_container_enabled }}
+        SBOM_UPLOAD_AR: ${{ inputs.sbom_upload_ar }}
+        EVENT_NAME: ${{ github.event_name }}
+      run: python3 "${{ github.action_path }}/../../../scripts/sbom/cli.py" gate --event "$EVENT_NAME"

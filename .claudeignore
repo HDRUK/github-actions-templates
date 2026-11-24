@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+vendor/
+.venv/
+__pycache__/
+
+# Build artefacts
+dist/
+build/
+.next/
+
+# Lock files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+composer.lock
+poetry.lock
+
+# Generated SBOM output
+*.cdx.json
+*.spdx.json

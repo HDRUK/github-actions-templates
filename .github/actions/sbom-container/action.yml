@@ -1,0 +1,90 @@
+name: SBOM (container layer)
+description: >
+  Generate a CycloneDX SBOM of OS packages and binaries for a pushed image (by
+  digest), scan it with Grype (report only), upload to the central GCS bucket and
+  optionally attach it to the image in Artifact Registry. The caller must already
+  be authenticated to GCP and logged in to the registry.
+
+inputs:
+  bucket:
+    required: true
+    description: Central SBOM bucket name
+  image_digest_uri:
+    required: true
+    description: Image reference including digest, e.g. region-docker.pkg.dev/p/r/img@sha256:...
+  upload_ar:
+    required: false
+    default: 'true'
+    description: Attach the SBOM to the image in Artifact Registry
+  syft_version:
+    required: false
+    default: '1.51.1'
+  grype_version:
+    required: false
+    default: '0.118.0'
+
+runs:
+  using: composite
+  steps:
+    - name: Install Syft and Grype
+      shell: bash
+      env:
+        SYFT_VERSION: ${{ inputs.syft_version }}
+        GRYPE_VERSION: ${{ inputs.grype_version }}
+      run: bash "${{ github.action_path }}/../../../scripts/sbom/install_tools.sh"
+
+    - name: Cache Grype database
+      uses: actions/cache@v6
+      with:
+        path: ~/.cache/grype
+        key: grype-db-${{ runner.os }}-${{ github.run_id }}
+        restore-keys: grype-db-${{ runner.os }}-
+
+    - name: Generate container SBOM and scan
+      id: gen
+      shell: bash
+      env:
+        REPO: ${{ github.repository }}
+        REF: ${{ github.ref }}
+        SHA: ${{ github.sha }}
+        BUCKET: ${{ inputs.bucket }}
+        IMAGE: ${{ inputs.image_digest_uri }}
+        # Packages only: file entries add tens of thousands of useless components.
+        SYFT_FILE_METADATA_SELECTION: none
+      run: |
+        set -euo pipefail
+        S="${{ github.action_path }}/../../../scripts/sbom"
+        DIGEST="${IMAGE#*@}"
+        python3 "$S/cli.py" paths --bucket "$BUCKET" --repo "$REPO" --layer container --ref "$REF" --sha "$SHA" | tee paths.out >> "$GITHUB_OUTPUT"
+        LATEST="$(sed -n 's/^latest=//p' paths.out)"; rm -f paths.out
+        mkdir -p sbom
+        # OS packages and binaries only; language packages belong to the app SBOM.
+        # CycloneDX 1.5 is what Artifact Registry is documented to accept.
+        syft scan "registry:${IMAGE}" --select-catalogers os,binary \
+          --source-name "${REPO#*/}" --source-version "$SHA" \
+          -o "cyclonedx-json@1.5=sbom/container.cdx.json"
+        python3 "$S/cli.py" annotate sbom/container.cdx.json --layer container --digest "$DIGEST"
+        grype "sbom:sbom/container.cdx.json" -o json > sbom/container.grype.json
+        python3 "$S/cli.py" report sbom/container.grype.json --repo "$REPO" --layer container \
+          --ref "$REF" --sha "$SHA" --sbom-uri "$LATEST" --digest "$DIGEST"
+
+    - name: Upload to GCS
+      shell: bash
+      env:
+        LATEST: ${{ steps.gen.outputs.latest }}
+        HISTORY: ${{ steps.gen.outputs.history }}
+        RELEASE: ${{ steps.gen.outputs.release }}
+        META: repo=${{ github.repository }},layer=container,ref=${{ github.ref_name }},sha=${{ github.sha }},run=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        set -euo pipefail
+        for dest in "$LATEST" "$HISTORY" "$RELEASE"; do
+          [ -n "$dest" ] && gcloud storage cp sbom/container.cdx.json "$dest" --custom-metadata="$META"
+        done
+        exit 0
+
+    - name: Attach SBOM to image in Artifact Registry
+      if: inputs.upload_ar == 'true'
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image_digest_uri }}
+      run: gcloud artifacts sbom load --source=sbom/container.cdx.json --uri="$IMAGE"
