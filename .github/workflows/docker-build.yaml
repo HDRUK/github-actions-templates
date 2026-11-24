@@ -146,56 +146,11 @@ jobs:
           message: Deploying {{ env.GITHUB_REF_NAME }} branch to DEV ${{ job.status }}
         if: always()
 
-  # ---------------------------------------------------------------------------
-  # SBOM generation and CVE scanning (see docs/ARCHITECTURE/sbom-pipeline.md).
-  # Off unless the SBOM_ENABLED variable is "true" for the calling repository.
-  # Findings never fail a build; tool or upload errors do.
-  # ---------------------------------------------------------------------------
-  sbom-app:
-    name: SBOM (application layer)
-    if: vars.SBOM_ENABLED == 'true' && !startsWith(github.event_name, 'pull_request')
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment: ${{ inputs.environment }}
-    permissions:
-      contents: read
-      id-token: write
-
-    steps:
-      - name: SBOM gate
-        id: gate
-        uses: HDRUK/github-actions-templates/.github/actions/sbom-gate@main
-        with:
-          sbom_enabled: ${{ vars.SBOM_ENABLED }}
-          sbom_app_enabled: ${{ vars.SBOM_APP_ENABLED }}
-          sbom_container_enabled: ${{ vars.SBOM_CONTAINER_ENABLED }}
-          sbom_upload_ar: ${{ vars.SBOM_UPLOAD_AR }}
-
-      - name: Checkout repository
-        if: steps.gate.outputs.run_app == 'true'
-        uses: actions/checkout@v7
-
-      - name: Google Auth (WIF)
-        if: steps.gate.outputs.run_app == 'true'
-        uses: google-github-actions/auth@v3
-        with:
-          workload_identity_provider: ${{ vars.SBOM_GCP_WIF_PROVIDER || secrets.WIF_PROVIDER }}
-          service_account: ${{ vars.SBOM_GCP_SERVICE_ACCOUNT || secrets.WIF_SERVICE_ACCOUNT }}
-
-      - name: Set up Cloud SDK
-        if: steps.gate.outputs.run_app == 'true'
-        uses: google-github-actions/setup-gcloud@v3
-
-      - name: Application SBOM
-        if: steps.gate.outputs.run_app == 'true'
-        uses: HDRUK/github-actions-templates/.github/actions/sbom-app@main
-        with:
-          bucket: ${{ vars.SBOM_BUCKET }}
-          composer_auth: ${{ secrets.COMPOSER_AUTH }}
-          exclude: ${{ vars.SBOM_EXCLUDES || './node_modules ./tests/fixtures' }}
-
-  sbom-container:
-    name: SBOM (container layer)
+  # SBOM generation. Off unless the SBOM_ENABLED variable is "true" for the calling
+  # repository, and never on pull requests. Errors here fail the build; vulnerabilities
+  # are not checked at all (the nightly scan does that). See docs/ARCHITECTURE/sbom-pipeline.md
+  sbom:
+    name: Generate SBOMs
     needs: build
     if: vars.SBOM_ENABLED == 'true' && !startsWith(github.event_name, 'pull_request') && needs.build.outputs.image_digest_uri != ''
     runs-on: ubuntu-latest
@@ -206,21 +161,9 @@ jobs:
       id-token: write
 
     steps:
-      - name: SBOM gate
-        id: gate
-        uses: HDRUK/github-actions-templates/.github/actions/sbom-gate@main
-        with:
-          sbom_enabled: ${{ vars.SBOM_ENABLED }}
-          sbom_app_enabled: ${{ vars.SBOM_APP_ENABLED }}
-          sbom_container_enabled: ${{ vars.SBOM_CONTAINER_ENABLED }}
-          sbom_upload_ar: ${{ vars.SBOM_UPLOAD_AR }}
-
-      - name: Checkout repository
-        if: steps.gate.outputs.run_container == 'true'
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
 
       - name: Google Auth (WIF)
-        if: steps.gate.outputs.run_container == 'true'
         id: auth
         uses: google-github-actions/auth@v3
         with:
@@ -228,22 +171,56 @@ jobs:
           workload_identity_provider: ${{ vars.SBOM_GCP_WIF_PROVIDER || secrets.WIF_PROVIDER }}
           service_account: ${{ vars.SBOM_GCP_SERVICE_ACCOUNT || secrets.WIF_SERVICE_ACCOUNT }}
 
-      - name: Set up Cloud SDK
-        if: steps.gate.outputs.run_container == 'true'
-        uses: google-github-actions/setup-gcloud@v3
+      - uses: google-github-actions/setup-gcloud@v3
 
       - name: Login to GAR
-        if: steps.gate.outputs.run_container == 'true'
         uses: docker/login-action@v4
         with:
           registry: ${{ secrets.GAR_LOCATION }}-docker.pkg.dev
           username: oauth2accesstoken
           password: ${{ steps.auth.outputs.access_token }}
 
-      - name: Container SBOM
-        if: steps.gate.outputs.run_container == 'true'
-        uses: HDRUK/github-actions-templates/.github/actions/sbom-container@main
+      - uses: anchore/sbom-action/download-syft@v0
         with:
-          bucket: ${{ vars.SBOM_BUCKET }}
-          image_digest_uri: ${{ needs.build.outputs.image_digest_uri }}
-          upload_ar: ${{ steps.gate.outputs.upload_ar }}
+          syft-version: v1.51.1
+
+      # Syft only reads production packages from composer.lock, so install first and
+      # it picks up everything (dev included) from vendor/composer/installed.json.
+      - name: Install PHP dependencies
+        if: hashFiles('composer.lock') != ''
+        env:
+          COMPOSER_AUTH: ${{ secrets.COMPOSER_AUTH }}
+        run: composer install --no-scripts --no-progress --ignore-platform-reqs
+
+      - name: Generate and upload SBOMs
+        env:
+          IMAGE: ${{ needs.build.outputs.image_digest_uri }}
+          BUCKET: ${{ vars.SBOM_BUCKET }}
+          EXCLUDES: ${{ vars.SBOM_EXCLUDES || './node_modules' }}
+          SYFT_FILE_METADATA_SELECTION: none # packages only: files add tens of thousands of components
+        run: |
+          set -euo pipefail
+          name="${GITHUB_REPOSITORY#*/}"
+
+          # app: dependencies from lockfiles (the app team can fix these)
+          args=(); for e in $EXCLUDES; do args+=(--exclude "$e"); done
+          syft scan dir:. "${args[@]}" --source-name "$name" --source-version "$GITHUB_SHA" -o cyclonedx-json=app.cdx.json
+
+          # container: OS packages and binaries in the image only (fixed by rebuilding the image).
+          # CycloneDX 1.5 is the version Artifact Registry is documented to accept.
+          syft scan "registry:$IMAGE" --select-catalogers os,binary \
+            --source-name "$name" --source-version "$GITHUB_SHA" -o cyclonedx-json@1.5=container.cdx.json
+
+          # branches/ expires after 90 days; releases/ (tags, release/*) is kept
+          kind=branches
+          [[ "$GITHUB_REF_TYPE" == tag || "$GITHUB_REF_NAME" == release/* ]] && kind=releases
+          ref="${GITHUB_REF_NAME//[^A-Za-z0-9._-]/-}"
+          for layer in app container; do
+            gcloud storage cp "$layer.cdx.json" "gs://$BUCKET/$kind/$GITHUB_REPOSITORY/$layer/$ref.cdx.json"
+          done
+
+      # Shows the SBOM next to the image in the GCP console.
+      - name: Attach container SBOM to image in Artifact Registry
+        env:
+          IMAGE: ${{ needs.build.outputs.image_digest_uri }}
+        run: gcloud artifacts sbom load --source=container.cdx.json --uri="$IMAGE"

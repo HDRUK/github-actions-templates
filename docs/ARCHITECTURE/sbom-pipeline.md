@@ -1,88 +1,95 @@
 # SBOM pipeline
 
-Central SBOM generation and CVE scanning for every repository that builds through
-`docker-build.yaml`. Consuming repositories need no workflow changes: they already
-call `HDRUK/github-actions-templates/.github/workflows/docker-build.yaml@main`.
+An SBOM (software bill of materials) is a list of every package an application is built from. We generate
+two for each build, store them in one bucket, and scan them every night for known vulnerabilities.
 
-## What is produced
-
-Two CycloneDX SBOMs per build, owned and reported separately.
-
-| Layer | Source | Contents | Owner can fix by |
-| --- | --- | --- | --- |
-| `app` | `syft scan dir:.` after dependency install | npm, pip, composer packages (lockfiles) | updating dependencies |
-| `container` | `syft scan registry:<image@digest>` | OS packages and binaries only (`--select-catalogers os,binary`) | bumping or rebuilding the base image |
-
-Every SBOM is scanned with Grype. **Findings are report only: they never fail a
-build.** They appear in the job summary and (via the nightly scan) in BigQuery.
-**Tool errors do fail the build** when SBOM is enabled (Syft/Grype crash, GCS or
-Artifact Registry upload failure).
-
-## Flow
+## How it works
 
 ```mermaid
 flowchart LR
-  subgraph build["docker-build.yaml (per push)"]
-    B[build + push image] --> D[resolve digest]
-    A[sbom-app job]:::sbom
-    C[sbom-container job]:::sbom
-    D --> C
-  end
-  A --> G[(GCS bucket)]
-  C --> G
-  C --> AR[Artifact Registry]
-  subgraph nightly["sbom-nightly-scan.yaml (03:00 UTC)"]
-    G --> L[list latest/**] --> S[grype sbom:] --> BQ[(BigQuery sbom.findings / sbom.inventory)]
-  end
-  BQ --> SS[Superset]
-  classDef sbom fill:#eef,stroke:#66a;
+  B[docker-build: build + push image] --> S[sbom job: Syft]
+  S -->|app.cdx.json + container.cdx.json| G[(GCS bucket)]
+  S -->|container SBOM| AR[Artifact Registry]
+  G --> N[Nightly: Grype scans every SBOM] --> BQ[(BigQuery)] --> SS[Superset]
 ```
 
-The container job needs the pushed digest so it runs after `build`; the app job
-runs in parallel with it.
+1. **On every build** of an enabled repository, a job in `docker-build.yaml` runs after the image is pushed and creates:
+   - an **app SBOM**: npm, pip and composer packages, read from the repo's lockfiles. The app team fixes these by updating dependencies.
+   - a **container SBOM**: operating system packages and binaries inside the pushed image. These are fixed by rebuilding the image.
+2. Both are uploaded to the bucket, and the container SBOM is also attached to the image in Artifact Registry so it shows next to the image in the GCP console. **Nothing is scanned during the build**, so builds stay fast and can't be failed by a new CVE.
+3. **Every night** `sbom-nightly-scan.yaml` scans each stored SBOM against a fresh vulnerability database and loads the results into BigQuery.
+4. **Superset** reads BigQuery for dashboards.
 
-## Components
+## Where things are
 
-| Path | Purpose |
+| File | What it does |
 |---|---|
-| `.github/actions/sbom-gate` | Turns `SBOM_*` variables into `run_app`, `run_container`, `upload_ar` |
-| `.github/actions/sbom-app` | App SBOM, scan, summary, GCS upload |
-| `.github/actions/sbom-container` | Container SBOM, scan, summary, GCS upload, Artifact Registry attach |
-| `.github/workflows/sbom-nightly-scan.yaml` | Nightly re-scan into BigQuery |
-| `scripts/sbom/sbom_lib.py` | Tested logic: gate, paths, flattening, nightly loop |
-| `scripts/sbom/cli.py` | Thin CLI over the library |
-| `scripts/sbom/install_tools.sh` | Installs pinned Syft/Grype with checksum verification |
+| `.github/workflows/docker-build.yaml` (`sbom` job) | Builds and uploads both SBOMs |
+| `.github/workflows/sbom-nightly-scan.yaml` | Runs the nightly scan |
+| `scripts/sbom/nightly.sh` | The scan loop: download, Grype, flatten, load to BigQuery |
+| `scripts/sbom/flatten.jq`, `inventory.jq` | Turn Grype and SBOM output into BigQuery rows |
+| `scripts/sbom/test.sh` | Tests for the two jq filters (`.github/workflows/sbom-tests.yaml` runs it) |
 
-## Storage layout
+## Storage
 
-```text
-gs://<SBOM_BUCKET>/latest/<org>/<repo>/<layer>/<ref>.cdx.json                 overwritten each build; read by nightly scan
-gs://<SBOM_BUCKET>/history/<org>/<repo>/<layer>/<ref>/<sha>.cdx.json          expires after 90 days
-gs://<SBOM_BUCKET>/releases/<org>/<repo>/<layer>/<ref>/<sha>.cdx.json         tags and release/* branches; kept
+```
+gs://<SBOM_BUCKET>/branches/<org>/<repo>/<app|container>/<ref>.cdx.json    overwritten each build, expires after 90 days
+gs://<SBOM_BUCKET>/releases/<org>/<repo>/<app|container>/<ref>.cdx.json    tags and release/* branches, kept
 ```
 
-This differs from the original brief, which put `<ref>` before `latest`. The top-level
-`history/` prefix exists so a GCS lifecycle rule (which matches by prefix only) can
-expire history without touching `latest/` or `releases/`.
+`<ref>` is the branch or tag name with anything other than letters, digits, `.`, `_` and `-` replaced by `-`
+(`feat/x` becomes `feat-x`). The two folders exist so one lifecycle rule can expire `branches/` without touching releases.
+SBOMs list a repository's full dependency inventory, so the bucket must be private.
 
-`<ref>` is sanitised (`feat/x` becomes `feat-x`, path traversal characters removed).
-Object metadata: `repo`, `layer`, `ref`, `sha`, `run`.
-The SBOM itself also records `sbom:layer` and `sbom:image_digest`
-as CycloneDX metadata properties so the nightly scan needs no side data.
+## Settings
 
-## BigQuery
+Set these as GitHub Actions **variables** at organisation level (limited to selected repositories to roll out in stages).
+A repository-level variable overrides the organisation one. Nothing is hard-coded in consuming repositories.
 
-`sbom.findings` and `sbom.inventory`: see [sbom-infrastructure.md](../OPERATIONS/sbom-infrastructure.md) for DDL.
+**`SBOM_ENABLED`** (`true`, default off)
+The on/off switch. Anything other than `true` means no SBOM job runs and the build is unchanged. It never runs on pull requests.
+To switch it off everywhere, set it to `false`; this takes effect on the next run with no code change.
 
-## Decisions
+**`SBOM_BUCKET`** (required)
+Name of the bucket the SBOMs are written to. It must already exist. If it is wrong or missing, the upload fails and so does the build.
 
-- No enforce or gating mode for findings. Reviewed and rejected: vulnerability backlogs are tracked in Superset rather than blocking deploys.
-- Syft and Grype versions are pinned in the composite actions and installed from GitHub releases with checksum verification, instead of marketplace actions.
-- Pull request builds never run SBOM jobs (no cloud credentials, no durable value).
-- Base image is not tracked. Container findings are grouped by repo and package; add base image detection only if dashboards need it.
+**`SBOM_GCP_WIF_PROVIDER`** and **`SBOM_GCP_SERVICE_ACCOUNT`** (optional)
+How the job logs in to Google Cloud without stored keys. If unset it reuses the same login as the image push, which only works
+if that identity can also write to the SBOM bucket.
 
-## Known items to verify on first pilot run
+**`SBOM_EXCLUDES`** (optional, default `./node_modules`)
+Space separated paths the app SBOM ignores. Setting it replaces the default.
 
-- `gcloud artifacts sbom load` accepts CycloneDX 1.5 as generated (`cyclonedx-json@1.5`).
-- Environment-scoped variables shadow organisation/repository variables in jobs that declare `environment:`; the SBOM jobs do, matching `build`.
-- The composite actions are referenced `@main`, so they must merge to `main` together with the workflow change.
+For the nightly scan, set these on the `github-actions-templates` repository: `SBOM_BUCKET`, `SBOM_BQ_DATASET` (as `project.dataset`),
+`SBOM_GCP_WIF_PROVIDER`, `SBOM_GCP_SERVICE_ACCOUNT`, and optionally the secret `SBOM_SLACK_WEBHOOK_URL`
+(or the existing `SLACK_WEBHOOK_URL`). If a webhook is set, a Slack message is sent when the scan fails or fixable critical findings exist.
+
+## What fails a build
+
+If SBOM is enabled, a tool or upload error (Syft crash, bucket missing, login failure) fails the build. **Vulnerabilities never do**,
+because builds don't scan for them. An outage of GCS or Google login could therefore fail builds in every enabled repository;
+`SBOM_ENABLED=false` is the quick switch-off.
+
+## Nightly scan
+
+Runs at 03:00 UTC and on demand (Actions > SBOM nightly scan > Run workflow). An SBOM that can't be scanned is logged as a
+warning and skipped, the rest are loaded, and the run is marked failed at the end so it is noticed. Re-running on the same day
+adds duplicate rows for that date, so dashboards should filter on the latest `scan_date`.
+
+## Superset
+
+Superset reads `sbom.findings` and `sbom.inventory` through its existing BigQuery connection. Suggested dashboards: fixable
+critical/high findings per repo (app layer), packages affecting the most repos (container layer), repos with no or stale SBOMs,
+and releases only (`sbom_uri LIKE '%/releases/%'`).
+
+```sql
+-- Fixable critical/high by repo, app layer, latest scan
+SELECT repo, severity, COUNT(*) AS findings
+FROM sbom.findings
+WHERE layer = 'app' AND fix_state = 'fixed' AND severity IN ('Critical', 'High')
+  AND scan_date = (SELECT MAX(scan_date) FROM sbom.findings)
+GROUP BY repo, severity ORDER BY findings DESC;
+```
+
+Artifact Registry's own scanner will still show language package CVEs for images in the GCP console. That is expected; the
+app and container split lives here.
